@@ -12,7 +12,7 @@ assumption labelled.
 git clone https://github.com/<owner>/prop-lab.git
 cd prop-lab
 python3 -m venv --system-site-packages .venv
-.venv/bin/python -m pip install -e ".[data,dev]"
+.venv/bin/python -m pip install -e ".[dev]"
 .venv/bin/python -m pytest -q
 ```
 
