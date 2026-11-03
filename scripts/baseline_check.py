@@ -32,6 +32,16 @@ reset at 18:00 ET.
 Run with:
 
     PROPLAB_MNQ_5M=/path/to/MNQ_5m.csv python scripts/baseline_check.py
+
+The MNQ 5m dataset is NOT part of this repository and is not freely
+downloadable, so this script cannot run without your own copy. It
+exits with code 2 and an explanatory message if the environment
+variable is unset or the file is missing. That is deliberate: a script
+that silently skips is worse than one that says why it cannot run.
+
+If you have no MNQ data, the equivalent check on data you do have is
+to run the reference rule and the correct rule over the same bars and
+compare the two numbers, exactly as this script does.
 """
 from __future__ import annotations
 
@@ -44,7 +54,14 @@ import pandas as pd
 from prop_lab.core import Bar, Signal, StrategyCore, run_backtest, summarize_trades
 from prop_lab.data import assign_session_dates
 
-# Reference numbers from the original project.
+# Reference numbers as reported by the reference project. These are not
+# a target to hit; they are the fixed point this script uses to detect
+# DRIFT in the engine. If the engine's numbers move, the engine changed
+# and that change has to be a deliberate, reviewed one.
+#
+# The reference project (github.com/dsilva42/prop-risk-geometry) carries
+# no license file, so nothing was copied from it. The strategy below is
+# an independent implementation of the described rules.
 REFERENCE_TRADES = 73
 REFERENCE_WIN_RATE = 0.411
 REFERENCE_MEAN_R = 0.233

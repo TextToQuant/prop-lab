@@ -17,24 +17,28 @@ prop-lab/
 ├── AGENTS.md                 ← the agent contract (deliverable #1)
 ├── README.md                 ← human quickstart
 ├── SPEC.md                   ← this file
+├── CHANGELOG.md              ← release history
+├── CONTRIBUTING.md           ← the honesty contract
+├── SECURITY.md
+├── LICENSE                   ← MIT, with a provenance notice
 ├── pyproject.toml
 ├── src/prop_lab/
 │   ├── __init__.py
 │   ├── core.py               ← Bar, Signal, StrategyCore, run_backtest
-│   ├── indicators.py         ← pure indicator functions
 │   ├── data/
 │   │   ├── __init__.py       ← load_bars(), STANDARD COLUMNS, normalise()
-│   │   ├── csv_drop.py       ← CSV drop-zone loader
+│   │   ├── schema.py         ← CSV drop-zone loader, canonical schema
 │   │   ├── yahoo_src.py      ← yfinance
 │   │   ├── binance_src.py    ← public REST
 │   │   └── dukascopy_src.py  ← .bi5 LZMA tick decode
 │   ├── validate/
 │   │   ├── __init__.py
-│   │   └── walkforward.py    ← purged walk-forward OOS
+│   │   ├── walkforward.py    ← purged walk-forward OOS
+│   │   └── significance.py   ← bootstrap CI on the mean R (the edge test)
 │   ├── firm/
 │   │   ├── __init__.py
 │   │   ├── rules.py          ← FirmRules dataclass + presets
-│   │   ├── monte_carlo.py    ← bootstrap challenge sim
+│   │   ├── monte_carlo.py    ← bootstrap challenge sim, zero-edge baseline
 │   │   └── funded.py         ← funded-phase sim
 │   ├── surface/
 │   │   ├── __init__.py
@@ -44,14 +48,18 @@ prop-lab/
 │   │   └── report.py         ← labeled markdown report
 │   └── cli.py                ← `proplab` CLI
 ├── examples/
-│   ├── strategies/
-│   │   ├── trend_continuation.py
-│   │   └── opening_range_breakout.py
-│   └── README.md
+│   └── strategies/
+│       ├── trend_continuation.py
+│       ├── opening_range_breakout.py
+│       └── doji_ema_trend.py
+├── scripts/
+│   └── baseline_check.py     ← engine validation against a reference
 ├── tests/
 └── docs/
     ├── DATA.md
-    └── HONESTY.md
+    ├── HONESTY.md
+    ├── GOAL.md               ← the defect ledger
+    └── PRIOR-ART.md          ← the prior-art review
 ```
 
 ---
@@ -257,14 +265,53 @@ class WFResult:
     oos_total_r: float
     is_mean_r: float
     degradation: float      # is_mean_r - oos_mean_r
-    verdict: str             # 'holds' | 'degrades' | 'fails'
+    verdict: str             # 'holds' | 'degrades' | 'no_edge' | 'fails'
     n_windows: int
     warnings: list[str]
+    # Edge significance. The verdict is refined by these: a strategy whose
+    # out-of-sample mean R is indistinguishable from zero gets "no_edge"
+    # rather than "holds".
+    edge_significant: bool = False
+    edge_conclusive: bool = False
+    edge_ci_low: float = 0.0
+    edge_ci_high: float = 0.0
+    edge_t_statistic: float = 0.0
 
 def walk_forward(strategy_factory, df, *, n_splits=5, train_frac=0.6,
                  purge_bars=0, embargo_bars=0,
                  direction="both", risk_points=None) -> WFResult:
 ```
+
+The signature above is exact and is checked mechanically by
+`tests/test_docs_match_code.py`.
+
+### `significance.py` — the edge test
+
+```python
+@dataclass
+class EdgeTest:
+    n_trades: int
+    mean_r: float
+    stderr: float
+    t_statistic: float
+    ci_low: float
+    ci_high: float
+    significant: bool
+    conclusive: bool
+    method: str
+    n_attempts: int
+    warnings: list[str]
+    def describe(self) -> str: ...
+    def warning(self) -> str: ...
+
+def test_edge(pnl_r_array, *, n_attempts=10000, seed=42,
+              confidence=0.95) -> EdgeTest: ...
+```
+
+`test_edge` never raises on an empty sample; it returns an inconclusive
+result with zeroed numbers. `conclusive` is false below 30 trades, and
+a non-significant result on a small sample means **inconclusive**, not
+**no edge**.
 
 - `strategy_factory` is a **callable** returning a fresh strategy instance
   (state must not leak between folds).
@@ -279,6 +326,10 @@ def walk_forward(strategy_factory, df, *, n_splits=5, train_frac=0.6,
   - `0.10 < degradation <= 0.30` → `"degrades"`
   - `degradation > 0.30` → `"fails"`
   - if `oos_mean_r <= 0` → `"fails"` regardless.
+  - **if the edge is not statistically distinguishable from zero →
+    `"no_edge"`**, whatever the degradation. Degradation alone is never
+    enough: a strategy with an edge of exactly zero does not "hold",
+    there was nothing to hold.
 - Warn when total OOS trades < 30 ("sample too small to conclude").
 
 ---
@@ -330,7 +381,28 @@ def simulate_challenge(pnl_r_array, rules: FirmRules, *,
 
 def monte_carlo_challenge(pnl_r_array, rules, *, risk_geometry="frac_2pct",
                           n_attempts=10000, seed=42,
-                          **kw) -> MCSummary: ...
+                          atr=0.0, max_trades=2000, trades_per_day=3,
+                          max_days=None, resampling="block",
+                          session_dates=None, compare_iid=False,
+                          mean_block_length=5.0) -> MCSummary: ...
+
+# The exact signature, checked mechanically:
+#   pnl_r_array, rules, risk_geometry, n_attempts, seed, atr, max_trades,
+#   trades_per_day, max_days, resampling, session_dates, compare_iid,
+#   mean_block_length
+
+def zero_edge_baseline(rules, *, n_trades=2000, risk_geometry="frac_2pct",
+                       n_attempts=2000, seed=42) -> float:
+    # exact: rules, n_trades, risk_geometry, n_attempts, seed
+    """The pass rate a strategy with NO edge scores under these rules.
+
+    A challenge is not a coin toss. The profit target sits above the
+    starting balance and the trailing drawdown sits below it, so a random
+    walk that happens to run up early reaches the target before it
+    breaches the floor. For the APEX 50K EOD rules this is roughly 27
+    percent. Every reported pass rate must be shown against it, because
+    a pass rate on its own is a score and not a comparison.
+    """
 
 @dataclass
 class MCSummary:
@@ -357,6 +429,23 @@ pnl_r = float(pnl_r_array[rng.integers(0, len(pnl_r_array))])
 
 Never `rng.random() < win_rate`. Never `rng.choice([-1, rr])`. The real
 win/loss size distribution is the whole point.
+
+**Block bootstrap by default, i.i.d. as a diagnostic.** Losses arrive in
+clusters and a trailing drawdown is a path-dependent barrier, so the
+order of trades matters. `resampling="block"` (the default) groups
+trades by `session_dates` and resamples whole days.
+`resampling="stationary"` uses the Politis and Romano (1994) stationary
+bootstrap, which draws geometric-length blocks with a uniformly random
+start index per block. `compare_iid=True` reports the gap between the
+block bootstrap and i.i.d., which is the honest way to show how much the
+dependence matters.
+
+**The stationary bootstrap must genuinely resample.** Drawing a block
+from a single fixed start and walking the array cyclically produces a
+permutation of the source, which pins the resampled mean to the source
+mean and gives it zero sampling variability. A bootstrap whose mean
+never varies cannot estimate the uncertainty of that mean. This was a
+real defect; `tests/test_bootstrap_properties.py` now guards it.
 
 **Risk geometries** (all `risk_fn(equity, peak, atr) -> dollars`):
 
@@ -439,6 +528,33 @@ class Surface:
 
 ### Three surface builders
 
+**Always pass `session_dates`** so the surfaces use the same resampling
+as the headline Monte Carlo; otherwise a report can print two different
+pass rates for one strategy.
+
+The exact signatures, checked mechanically:
+
+```python
+def risk_geometry_surface(pnl_r_array, rules, *, risk_geometries=None,
+                           n_attempts=2000, seed=42,
+                           session_dates=None) -> Surface: ...
+# pnl_r_array, rules, risk_geometries, n_attempts, seed, session_dates
+
+def rr_surface(pnl_r_array, rules, *, rr_values=None, risk_geometries=None,
+               n_attempts=2000, seed=42, measured=True,
+               strategy_factory=None, df=None,
+               session_dates=None) -> Surface: ...
+# pnl_r_array, rules, rr_values, risk_geometries, n_attempts, seed, measured,
+# strategy_factory, df, session_dates
+
+def winrate_surface(pnl_r_array, rules, *, win_rates=None, rr_values=None,
+                    n_attempts=2000, seed=42, session_dates=None,
+                    operating_point=None,
+                    operating_point_label="this strategy") -> Surface: ...
+# pnl_r_array, rules, win_rates, rr_values, n_attempts, seed, session_dates,
+# operating_point, operating_point_label
+```
+
 **`risk_geometry_surface(pnl_r_array, rules, n_attempts=...)`**
 - x axis = risk geometry (5 values). y axis = firm ruleset (EOD vs
   Intraday, or a list of rulesets). z = pass rate.
@@ -446,7 +562,8 @@ class Surface:
   real trade distribution. This is the surface that carries real
   information, and it is the one to lead with.
 
-**`rr_surface(pnl_r_array, rules, rr_values=..., n_attempts=..., measured=True)`**
+**`rr_surface(pnl_r_array, rules, rr_values=..., n_attempts=..., measured=True,
+strategy_factory=None, df=None)`**
 - x axis = R:R. y axis = risk geometry.
 - `measured=True` → re-run the strategy's backtest at each R:R, rebuild the
   `pnl_r` array, then simulate. **This is the honest version.** Cost: one
@@ -457,7 +574,8 @@ class Surface:
 - The report MUST state which mode produced the surface. If a measured
   surface was requested and is affordable, do measured.
 
-**`winrate_surface(pnl_r_array, rules, win_rates=..., rr_values=...)`**
+**`winrate_surface(pnl_r_array, rules, win_rates=..., rr_values=...,
+operating_point=None, operating_point_label="this strategy")`**
 - x axis = assumed win rate. y axis = R:R. z = pass rate.
 - **BOTH AXES MODELLED — ALWAYS.** You cannot "re-backtest" a win rate; you
   would be fabricating trades. This surface assumes each trade wins with
@@ -487,13 +605,20 @@ be labelled as one.
 ```python
 def build_report(*, wf: WFResult, mc: MCSummary, surfaces: list[Surface],
                  strategy_name: str, data_source: str,
-                 data_range: str, rules: FirmRules) -> str:
+                 data_range: str, rules: FirmRules,
+                 extra_warnings: list[str] | None = None,
+                 baseline_pass_rate: float | None = None) -> str:
+# exact: wf, mc, surfaces, strategy_name, data_source, data_range, rules,
+#        extra_warnings, baseline_pass_rate
 ```
 
 Returns Markdown. It MUST contain, in order:
 
 1. **Headline** — strategy, data source + range, n trades, IS vs OOS mean R,
-   pass rate with 95% CI, degradation verdict.
+   pass rate with 95% CI, **the zero-edge baseline it must be compared
+   against**, the **confidence interval on the mean R**, and the
+   degradation verdict. The headline states plainly when no edge was
+   detected.
 2. **Honesty section** — a table of every surface axis with its provenance
    (`measured` / `modelled`) and a one-line note per surface. This section
    is mandatory and must not be omitted for any reason.
@@ -521,9 +646,26 @@ No emojis. Plain prose. Numbers must be present, not described.
 | `montecarlo`       | run the bootstrap MC, print pass rate + CI                   |
 | `surface`          | build surfaces, save PNGs                                   |
 | `report`           | run everything, write a labeled Markdown report + PNGs      |
-| `strategies`       | list available strategies                                   |
+| `strategies`       | list available strategies and presets                        |
+| `inspect`          | show a strategy's parameters and the assumptions it carries  |
+| `trades`           | export the trade list for auditing by hand                   |
+| `sweep`            | sweep strategy parameters, write a CSV                      |
 
 `report` is the one-shot path a stranger's agent runs.
+
+The strategy spec is `path/to/file.py:ClassName`. The path may be
+absolute or relative, and on Windows it is split on the **last** colon,
+because the drive letter is itself a colon.
+
+Flags that change the result and must not be left at their defaults:
+
+| flag | default | note |
+|---|---|---|
+| `--session-open-hour` | inferred (0 for Binance, 18 otherwise) | wrong here splits every session |
+| `--purge-bars` | 0 | 0 means the walk-forward is **not** purged |
+| `--embargo-bars` | 0 | 0 means no embargo |
+| `--attempts` | varies | 10,000 for a published number; 500 gives a CI about 4 points wide |
+| `--firm` | varies | the ruleset decides the target and the floor |
 
 ---
 
@@ -565,6 +707,28 @@ The single most important deliverable. It must tell an AI agent:
 5. **Warnings are not optional.** Sample size, day approximation, roll
    adjustment — surfaced in the report, not buried in logs.
 6. **Deterministic.** Every stochastic step takes an explicit `seed`.
-7. **Python 3.10+**, `numpy`, `pandas`, `matplotlib` only as hard deps.
-   `yfinance` optional (Yahoo source), `requests` optional (Binance/Dukascopy).
-   The core package must import with stdlib+numpy+pandas+matplotlib only.
+7. **Python 3.10+**. Core dependencies: `numpy`, `pandas`, `matplotlib`,
+   `yfinance` and `requests`. The data adapters are **core**, not an
+   optional extra: the Yahoo adapter is imported by the regression tests,
+   and the Binance and Dukascopy adapters need `requests`. A clean
+   `pip install -e .` must produce an environment where
+   `import prop_lab.data` works. The only extra is `dev` (pytest).
+
+8. **A pass rate is a comparison, not a score.** Every report states the
+   zero-edge baseline next to the number, and the confidence interval on
+   the mean R next to the verdict.
+
+9. **The verdict vocabulary is `holds`, `degrades`, `no_edge`, `fails`.**
+   `holds` requires a statistically distinguishable edge.
+
+10. **Every fix ships with a test that fails without it.** Prove it by
+    reintroducing the defect and watching the test go red.
+
+11. **Every surface builder gets `session_dates`.** A surface that
+    resamples differently from the headline prints a second, different
+    pass rate for the same strategy.
+
+12. **Every number in a document is checked against the code.** A spec
+    that drifts from the implementation is worse than no spec, because
+    an agent follows it. `tests/test_docs_match_code.py` enforces the
+    signatures that can be checked mechanically.

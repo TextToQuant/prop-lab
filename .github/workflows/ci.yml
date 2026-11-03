@@ -37,7 +37,8 @@ jobs:
       - name: Run the test suite
         run: python -m pytest -q
 
-      # The offline suite has a hard time budget. NOTES.md records a live
+      # The offline suite has a hard time budget. The project's history
+      # records a live
       # network test leaking into the offline run and pushing it from 9
       # seconds to 98. This step fails the build if that happens again.
       - name: Check the offline suite stays fast

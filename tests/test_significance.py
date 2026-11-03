@@ -1,6 +1,6 @@
 """Tests for the edge-significance layer.
 
-The rule from NOTES.md applies: a regression test must exercise the
+The rule this project learned the hard way: a regression test must exercise the
 shipped code path, not a helper it happens to call. These tests drive
 ``walk_forward`` -- the code the CLI actually runs -- and assert on the
 verdict and the warning it produces.

@@ -16,12 +16,28 @@ venv/
 # depth, including the real src/prop_lab/data/ package. The negation
 # after it re-includes that package. This is the standard git idiom for
 # "ignore a directory name, except where it is a source package".
-data/
-!src/prop_lab/data/
+#
+# The same trap applies to the file patterns below: a bare "*.csv"
+# ignores every CSV anywhere, including an example dataset that belongs
+# in the repository. The negations re-include the places where a data
+# file is meant to be committed.
+# "/data/" with a leading slash matches ONLY the root-level data
+# directory. A bare "data/" would match any directory called data at any
+# depth, and git cannot re-include a file whose parent directory is
+# excluded, so the negation would never take effect.
+/data/
 *.csv
 *.parquet
 *.bi5
 *.zip
+
+# Re-include the places where a data file IS meant to be committed.
+# Each directory is re-included before the files inside it, because the
+# negation of a directory is what lets git look inside it at all.
+!src/prop_lab/data/
+!examples/data/
+!examples/data/*.csv
+!docs/**/*.csv
 reports/
 out/
 *.png
@@ -31,3 +47,17 @@ out/
 .vscode/
 .idea/
 .DS_Store
+
+# Environment and secrets — never commit these.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Coverage and type-checking output
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.pytype/

@@ -58,7 +58,7 @@ wrong. Specifically:
 - **Do not remove warnings.** Add them if they are missing; the honesty
   contract says warnings are never filtered out.
 - **Every fix ships with a test that fails before it and passes after.**
-  Follow the rule already written in NOTES.md: *a regression test must
+  Follow the rule this project already learned the hard way: *a regression test must
   exercise the shipped code path, not a helper it happens to call. Prove each
   new test by reintroducing the bug and confirming it fails.*
 - **Prove it end to end.** After the changes, the offline suite must still
@@ -320,7 +320,7 @@ discovery, no classifiers for the supported Python versions, and the
 version is hardcoded rather than driven by a single source of truth.**
 
 **D6. The offline test suite has a 10-second budget that is easy to break
-silently.** NOTES.md records that a network test once leaked into the
+silently.** This project learned that a network test once leaked into the
 offline run and pushed it to 98 seconds. There is no mechanism to stop it
 happening again.
 
@@ -349,4 +349,4 @@ Every defect above was found by running the package, not by reading it.
 - Visual audit of all six surfaces: heatmap annotations correct and legible;
   the z-axis label and the colorbar label are two distinct texts (verified
   by pixel A/B diff against the repo's own `to_3d`), so the earlier
-  "missing z-axis title" reading was wrong and NOTES.md stands.
+  "missing z-axis title" reading was wrong and the pixel comparison stands.
