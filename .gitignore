@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data and generated artifacts — never commit these
+data/
+*.csv
+*.parquet
+*.bi5
+*.zip
+reports/
+out/
+*.png
+!docs/images/*.png
+
+# Editors
+.vscode/
+.idea/
+.DS_Store

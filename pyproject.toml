@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prop-lab"
+version = "0.1.0"
+description = "Agent-driven prop firm challenge lab: backtest any strategy, walk-forward OOS, honest bootstrap Monte Carlo pass-rate surfaces"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "prop-lab contributors" }]
+keywords = ["trading", "backtesting", "monte-carlo", "prop-firm", "agent"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+data = ["yfinance>=0.2", "requests>=2.31"]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/<owner>/prop-lab"
+
+[project.scripts]
+proplab = "prop_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: tests that hit the network (set PROPLAB_NETWORK_TESTS=1)"]
+filterwarnings = ["ignore::DeprecationWarning"]
