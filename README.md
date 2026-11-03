@@ -18,6 +18,33 @@ Requires Python 3.10+. Core dependencies: numpy, pandas, matplotlib.
 
 ---
 
+## Inspiration
+
+**This project exists because of [DeltaTrend Trading](https://www.youtube.com/@deltatrendtrading)
+(Thomas Skinner, also on [TikTok](https://www.tiktok.com/@deltatrendtrading)
+and [Instagram](https://www.instagram.com/deltatrendtrading)).**
+
+His pass-rate surface — pass rate as a function of win rate and
+reward-to-risk ratio — is the public conversation this lab was built to
+join. He popularised it on TikTok and YouTube using Topstep rules, and he
+has publicly pushed back on creators who copied the surface without
+understanding what the axes mean.
+
+`prop-lab` takes that idea and does what a surface cannot: it measures it.
+Where DeltaTrend's surface is a picture of a hypothesis, this package
+re-runs the strategy at every R:R, bootstraps the real per-trade
+distribution, tests the edge for statistical significance, and prints the
+zero-edge baseline next to your number so a pass rate can be read as a
+comparison rather than a score.
+
+The credit goes to him for the idea. The implementation is independent, and
+the difference in approach is stated everywhere it matters: this package
+labels every axis `measured` or `modelled`, because the win-rate axis
+**cannot** be measured from a backtest — forcing a different win rate means
+fabricating trades that never happened.
+
+---
+
 ## Start here: idea to number in one command
 
 ```bash
@@ -208,11 +235,15 @@ different owner (that older URL no longer resolves). It carries no license
 file, so it is cited as the origin of the idea and **no code was taken from
 it** — this package is an independent implementation.
 
-The pass-rate surface visualisation that started the public conversation
-about this geometry is [DeltaTrend Trading](https://www.youtube.com/@deltatrendtrading)'s
-work on TikTok and YouTube, using Topstep rules. He has publicly pushed
-back on creators who copied his surface without understanding what the axes
-mean.
+**The inspiration for this entire project is
+[DeltaTrend Trading](https://www.youtube.com/@deltatrendtrading)
+(Thomas Skinner)**, whose pass-rate surface — pass rate against win rate
+and R:R — started the public conversation this lab joins. He popularised it
+on TikTok and YouTube using Topstep rules, and has publicly pushed back on
+creators who copied the surface without understanding what the axes mean.
+This package is built on that idea and credits it explicitly; the surfaces
+here are the same subject, measured rather than asserted. See
+[the Inspiration section](#inspiration) at the top of this file.
 
 The purged walk-forward follows Lopez de Prado, "Advances in Financial
 Machine Learning", chapters 7 and 12, and the conventions of

@@ -578,7 +578,40 @@ daily loss limit**, and a `ruleEfficacy` field comparing relaxed vs tight settin
 
 ---
 
-## Part 3 — The specific question: has anyone published purged walk-forward + bootstrap Monte Carlo for trading challenges?
+## Part 3 — The origin of the idea: DeltaTrend Trading
+
+The pass-rate surface that this whole project is built around is not a repository and
+not a library. It is a public body of work by **[DeltaTrend Trading](https://www.youtube.com/@deltatrendtrading)**
+— Thomas Skinner, also on [TikTok](https://www.tiktok.com/@deltatrendtrading) and
+[Instagram](https://www.instagram.com/deltatrendtrading). It is listed here because a
+prior-art review that omits it would be misleading: the surface shape, the framing of
+pass rate as a function of win rate and R:R, and the public argument about what those
+axes mean all originate there.
+
+- **What it is:** a pass-rate surface — pass rate plotted against win rate and
+  reward-to-risk ratio — popularised on TikTok and YouTube using **Topstep** rules.
+  It is the visual that made "what does my win rate and R:R actually buy me at a prop
+  firm" a question the trading community could answer with a picture.
+- **Why it matters here:** `prop-lab`'s surfaces are the same subject. The difference is
+  that this package *measures* rather than illustrates, and it says which axis is
+  measured and which is modelled.
+- **The public pushback matters too.** DeltaTrend has publicly criticised creators
+  who copied the surface without understanding what the axes mean. That criticism is
+  the reason this package labels every axis `measured` or `modelled`, and the reason
+  the win-rate axis is explicitly described as parametric by construction: you cannot
+  measure a different win rate from a backtest without fabricating trades that never
+  happened.
+- **Credit posture:** cite by name and URL, in the README and in the project docs. No
+  code or data was taken — there is none to take; the contribution is the idea and the
+  argument for it.
+
+**Verified 2026-11-03:** the YouTube channel resolves and is titled *DeltaTrend
+Trading*; the TikTok and Instagram handles `@deltatrendtrading` resolve to the same
+account. The Topstep rules referenced are publicly published by Topstep.
+
+---
+
+## Part 4 — The specific question: has anyone published purged walk-forward + bootstrap Monte Carlo for trading challenges?
 
 **No — not as a single pipeline. Verified by reading source, not inferring from READMEs.**
 
@@ -610,7 +643,7 @@ trades to estimate the pass rate — is the only construction in the set that do
 
 ---
 
-## Part 4 — Synthesis: what to reuse, what to avoid, what is genuinely new
+## Part 5 — Synthesis: what to reuse, what to avoid, what is genuinely new
 
 ### Reuse (MIT/Apache-2.0 — copy freely with attribution)
 
@@ -720,7 +753,11 @@ trades to estimate the pass rate — is the only construction in the set that do
 ### Recommended citation posture for the release
 
 Cite by name and URL, with license and the specific mechanism borrowed. The credits that
-matter most, in order: **LuxAlgo (MIT)** for rule semantics and the consistency model;
+matter most, in order: **DeltaTrend Trading** first, because the pass-rate surface and
+the public argument about its axes are the origin of the idea this project exists to
+extend — there is no license involved, only credit, and the credit must be visible in
+the README rather than buried in a footnote. Then **LuxAlgo (MIT)** for rule semantics
+and the consistency model;
 **MaverickHQ (Apache-2.0)** for the block bootstrap, dated profiles and calibration gates;
 **greybeard-code/gbBacktester (MIT)** for autocorrelation-selected block length and the
 MAE/MFE breach accounting; **jalv92/PropSim (MIT)** for the intraday-excursion
