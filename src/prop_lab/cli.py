@@ -49,7 +49,11 @@ def _load_strategy(spec: str):
         raise ValueError(
             f"strategy must be given as 'module:ClassName', got {spec!r}"
         )
-    module_path, class_name = spec.split(":", 1)
+    # Split on the LAST colon, not the first. On Windows an absolute path
+    # starts with a drive letter ("C:/..."), so splitting on the first
+    # colon would turn the drive letter into the module name and every
+    # absolute path would fail with "No module named 'C'".
+    module_path, class_name = spec.rsplit(":", 1)
 
     if module_path.endswith(".py"):
         path = Path(module_path)
@@ -837,6 +841,22 @@ def cmd_report(args: argparse.Namespace) -> int:
     path = out_dir / "report.md"
     path.write_text(markdown, encoding="utf-8")
     print(f"wrote {path}")
+
+    # The report is documented as "everything, plus the labelled
+    # surfaces", so it has to write the surface figures too. Otherwise a
+    # reader gets a report that describes six plots and ships none.
+    for surface in surfaces:
+        stem = surface.spec.x_name
+        fig = surface.to_3d()
+        path3d = out_dir / f"surface_{stem}_3d.png"
+        fig.savefig(path3d, dpi=120, bbox_inches="tight")
+        print(f"wrote {path3d}")
+
+        fig2 = surface.to_heatmap()
+        path2d = out_dir / f"surface_{stem}_heatmap.png"
+        fig2.savefig(path2d, dpi=120, bbox_inches="tight")
+        print(f"wrote {path2d}")
+
     print()
     print(markdown)
     return 0
