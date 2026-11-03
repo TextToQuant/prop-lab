@@ -5,14 +5,26 @@ Upstream GitHub repo: `<owner>/prop-lab`
 
 ## Where things stand
 
-**DONE AND PUSHED.** Commit `1deb68b` on `master`, 33 files, verified via
-the GitHub API. 143 tests pass, 4 skipped.
+**DONE AND PUSHED.** Verified from a CLEAN CLONE: install works and
+143 tests pass on numpy 2.5.4 / pandas 3.1.0 (newer than the dev env).
 
 - Repo: https://github.com/<owner>/prop-lab (private)
+- HEAD: `95d8f05` on `master`
 - Baseline check passes (reference rule reproduces 73 trades exactly)
 - Surfaces re-rendered and visually audited, annotation bug fixed
 - Research scratch and temp test files deleted
 - Older reference checkout left untouched (reference/attic)
+
+## The one bug that would have broken every user
+
+`.gitignore` had a bare `data/` pattern. Git matches that against any
+directory named `data` at any depth, so `src/prop_lab/data/` was never
+committed. It worked locally because the editable install puts `src` on
+the path, and the test suite passed, and the CLI ran. A fresh clone was
+broken.
+
+The only reason it was caught is that the clone test was actually run
+instead of assumed. Keep doing that.
 
 ## What is built
 
@@ -68,6 +80,15 @@ These are the ones that would have shipped broken:
 
 6. **CLI printed `TC {}`** because it built the strategy label with an
    empty kwargs dict. Fixed in `src/prop_lab/cli.py`.
+
+7. **`.gitignore` excluded the `prop_lab.data` source package.** A bare
+   `data/` pattern matches any directory named `data` at any depth, so
+   `src/prop_lab/data/` was never committed. The package existed on disk
+   and the editable install worked locally, but a FRESH CLONE could not
+   import `prop_lab.data` and the test suite failed at collection.
+   Fixed with the negation `!src/prop_lab/data/`.
+   **Lesson: never trust an editable install. Always verify from a clean
+   clone.** This would have shipped a broken repo to every single user.
 
 ## The session-date finding
 
