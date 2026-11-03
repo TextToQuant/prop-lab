@@ -327,7 +327,14 @@ def test_trending_strategy_keeps_its_edge_out_of_sample():
 
     assert result.n_oos_trades >= 30
     assert result.oos_mean_r > 0
-    assert result.verdict in ("holds", "degrades")
+    # "no_edge" is allowed here because this fixture's edge is positive
+    # but NOT statistically significant: a mean R of +0.05 with a 95%
+    # interval of [-0.12, +0.23] over 222 trades is not a demonstrated
+    # edge. What must never happen is a "fails" verdict for a strategy
+    # whose out-of-sample mean R is positive and whose degradation is
+    # small.
+    assert result.verdict in ("holds", "degrades", "no_edge")
+    assert result.degradation <= 0.30
 
 
 def test_trending_strategy_out_of_sample_accounting_is_consistent():
@@ -339,7 +346,7 @@ def test_trending_strategy_out_of_sample_accounting_is_consistent():
     assert sum(w.n_train_trades for w in result.windows) == result.n_is_trades
 
     if result.n_oos_trades >= 30:
-        assert result.verdict in ("holds", "degrades", "fails")
+        assert result.verdict in ("holds", "degrades", "fails", "no_edge")
     if result.verdict in ("holds", "degrades"):
         assert result.oos_mean_r > 0
     if result.n_oos_trades < 30:
@@ -503,16 +510,28 @@ def test_degradation_definition_matches_spec():
 
 
 def test_verdict_thresholds_are_respected():
+    """The verdict must follow the degradation thresholds AND significance.
+
+    The degradation-only thresholds are unchanged. What changed is that a
+    strategy whose out-of-sample edge is not distinguishable from zero is
+    no longer reported as "holds" -- there was no edge to hold. The
+    fixture strategy here genuinely has no significant edge (its mean R is
+    positive but its confidence interval spans zero), so "no_edge" is the
+    correct verdict and the old assertion of "holds" was asserting the
+    defect.
+    """
     df = make_frame(n=1200, seed=31, drift=0.0004, vol=0.4)
     result = walk_forward(lambda: MaCrossStrategy(), df, n_splits=5)
     if result.oos_mean_r <= 0:
         assert result.verdict == "fails"
-    elif result.degradation <= 0.10:
-        assert result.verdict == "holds"
-    elif result.degradation <= 0.30:
-        assert result.verdict == "degrades"
-    else:
+    elif result.degradation > 0.30:
         assert result.verdict == "fails"
+    elif result.degradation > 0.10:
+        assert result.verdict == "degrades"
+    elif result.edge_conclusive and not result.edge_significant:
+        assert result.verdict == "no_edge"
+    else:
+        assert result.verdict == "holds"
 
 
 def test_oos_beats_is_is_flagged_as_a_caveat():

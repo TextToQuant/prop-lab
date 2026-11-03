@@ -47,10 +47,13 @@ CITATION_CHECKED_DATE = "2026-11-03"
 #: Citations used by the provenance section of the report.
 CITATIONS: list[tuple[str, str, str]] = [
     (
-        "prop-risk-geometry (the reference project for risk geometries and "
-        "the bootstrap Monte Carlo approach). The repository now lives at "
-        "dsilva42/prop-risk-geometry; it was originally published as "
-        "hunter547/prop-risk-geometry.",
+        "prop-risk-geometry (the public reference project for risk "
+        "geometries and the bootstrap Monte Carlo approach). The approach "
+        "is credited to it; no code was taken from it, and this package is "
+        "an independent implementation. The repository lives at "
+        "dsilva42/prop-risk-geometry, having originally been published as "
+        "hunter547/prop-risk-geometry under a different owner; that older "
+        "URL no longer resolves, so cite the current one.",
         "https://github.com/dsilva42/prop-risk-geometry",
         CITATION_CHECKED_DATE,
     ),
@@ -82,6 +85,20 @@ CITATIONS: list[tuple[str, str, str]] = [
         "https://www.youtube.com/@deltatrendtrading",
         CITATION_CHECKED_DATE,
     ),
+    (
+        "PropSim-Enterprise/prop-firm-pass-rates -- the only public "
+        "EMPIRICAL pass-rate data found for prop firm evaluations, taken "
+        "from real live accounts rather than from a simulation. It reports "
+        "a phase-1 clear rate of roughly 13 to 14 percent and that about "
+        "54 percent of failed accounts breach the daily loss limit. Every "
+        "simulator in the public prior art produces pass rates well above "
+        "that, which is the number to calibrate against. If your simulated "
+        "pass rate is far above 14 percent for a strategy with no "
+        "detectable edge, the simulation is being optimistic, and the "
+        "caveats section says which ways it is optimistic.",
+        "https://github.com/PropSim-Enterprise/prop-firm-pass-rates",
+        CITATION_CHECKED_DATE,
+    ),
 ]
 
 #: Caveats that apply to every run, regardless of the data.
@@ -97,6 +114,19 @@ STANDING_CAVEATS: list[str] = [
     "The bootstrap approximates session boundaries with synthetic days, "
     "because a resampled trade sequence has no real calendar.",
     "A small trade sample cannot support a confident conclusion.",
+    "THE DRAWDOWN IS CHECKED ON CLOSED TRADE EQUITY, NOT INTRABAR. The "
+    "simulation sees one equity number per trade, so an account that dips "
+    "below the trailing floor in the middle of a trade and recovers into "
+    "the close is scored as surviving. Real firms check the floor "
+    "continuously against equity including unrealised profit. This makes "
+    "the pass rate here an UPPER BOUND, not a central estimate. It is the "
+    "single largest known source of optimism in this simulator, and it is "
+    "not a modelling choice that can be tuned away: the bootstrap has no "
+    "excursion data to work with.",
+    "THE WIN-RATE AXIS ON THE SURFACE IS PARAMETRIC. It assumes every "
+    "trade is exactly +rr or -1R. A real strategy with partial exits has "
+    "a different shape, so the surface is a picture of the challenge "
+    "geometry, not of your strategy.",
 ]
 
 _EMOJI_RE = re.compile(
@@ -174,7 +204,8 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
 # Section builders
 # ----------------------------------------------------------------------
 def _headline(
-    wf: Any, mc: Any, strategy_name: str, data_source: str, data_range: str, rules: Any
+    wf: Any, mc: Any, strategy_name: str, data_source: str, data_range: str, rules: Any,
+    baseline_pass_rate: float | None = None,
 ) -> str:
     """Build section 1, the headline.
 
@@ -198,6 +229,40 @@ def _headline(
     degradation = _get(wf, "degradation", None)
     rules_name = _get(rules, "name", type(rules).__name__ if rules else "n/a")
 
+    # -- edge significance ---------------------------------------------
+    # The pass rate CI below is a CI on the Monte Carlo ESTIMATE. It says
+    # nothing about whether the strategy has an edge. That is a different
+    # question with a different interval, and it belongs in the headline
+    # because it is the one that decides whether the number matters.
+    edge_ci_low = _get(wf, "edge_ci_low", None)
+    edge_ci_high = _get(wf, "edge_ci_high", None)
+    edge_significant = _get(wf, "edge_significant", None)
+    edge_conclusive = _get(wf, "edge_conclusive", None)
+
+    if edge_ci_low is None or edge_ci_high is None:
+        edge_line = "- Edge significance: not computed"
+    elif edge_conclusive and edge_significant:
+        edge_line = (
+            f"- Edge significance: the out-of-sample edge IS distinguishable "
+            f"from zero (95% CI {_fmt_float(edge_ci_low)} to "
+            f"{_fmt_float(edge_ci_high)}, excluding zero)"
+        )
+    elif edge_conclusive:
+        edge_line = (
+            f"- Edge significance: NO edge was detected. The out-of-sample "
+            f"mean R of {_fmt_float(_get(wf, 'oos_mean_r', None))} has a 95% "
+            f"bootstrap CI of {_fmt_float(edge_ci_low)} to "
+            f"{_fmt_float(edge_ci_high)}, which INCLUDES zero. The pass rate "
+            f"below is the pass rate of a strategy that is not measurably "
+            f"better than random."
+        )
+    else:
+        edge_line = (
+            f"- Edge significance: INCONCLUSIVE. Too few out-of-sample "
+            f"trades for a confidence interval on the mean R to mean "
+            f"anything."
+        )
+
     lines = [
         "## 1. Headline",
         "",
@@ -213,11 +278,36 @@ def _headline(
         f"- Out-of-sample total R: {_fmt_float(_get(wf, 'oos_total_r', None))}",
         f"- Degradation (IS mean R minus OOS mean R): "
         f"{_fmt_float(degradation)}",
+        edge_line,
         f"- Pass rate: {_fmt_pct(pass_rate)} "
         f"(95% CI {_fmt_pct(ci_low)} to {_fmt_pct(ci_high)})",
         f"- Out-of-sample verdict: {verdict}",
         "",
     ]
+
+    if baseline_pass_rate is not None:
+        excess = pass_rate - baseline_pass_rate
+        lines.append(
+            f"- Zero-edge baseline: a strategy with NO edge scores "
+            f"{_fmt_pct(baseline_pass_rate)} under these rules, so this "
+            f"strategy scores {_fmt_pct(excess)} "
+            f"{'ABOVE' if excess > 0 else 'BELOW'} that baseline."
+        )
+        lines.append("")
+    lines.append(
+        "The pass-rate CI is an interval on the Monte Carlo estimate of the "
+        "pass rate. It is not an interval on whether the strategy has an "
+        "edge; that is the line above."
+    )
+    lines.append(
+        "Read the pass rate against the zero-edge baseline, not against "
+        "zero. A challenge is not a coin toss: the target sits above the "
+        "starting balance and the trailing drawdown sits below it, so a "
+        "random walk that runs up early can reach the target before it "
+        "ever breaches the floor. That is why roughly a quarter of attempts "
+        "pass with no edge at all."
+    )
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -403,6 +493,13 @@ def _oos_table(wf: Any) -> str:
     )
     lines.append(f"- Folds: {_get(wf, 'n_windows', len(windows))}")
     lines.append(f"- Verdict: {_get(wf, 'verdict', 'n/a')}")
+    edge_low = _get(wf, "edge_ci_low", None)
+    edge_high = _get(wf, "edge_ci_high", None)
+    if edge_low is not None and edge_high is not None:
+        lines.append(
+            f"- Edge significance: 95% bootstrap CI on the out-of-sample "
+            f"mean R is {_fmt_float(edge_low)} to {_fmt_float(edge_high)}"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -467,6 +564,7 @@ def build_report(
     data_range: str,
     rules: Any,
     extra_warnings: Sequence[str] | None = None,
+    baseline_pass_rate: float | None = None,
 ) -> str:
     """Build the labelled Markdown report.
 
@@ -487,6 +585,10 @@ def build_report(
         data_range: the date range covered by the data.
         rules: the firm ruleset object. Needs at least a ``name``.
         extra_warnings: additional warnings to list under Caveats.
+        baseline_pass_rate: the pass rate a strategy with no edge would
+            get under these rules. When given, the headline states the
+            excess over that baseline, because a pass rate on its own
+            reads as a score when it is really a comparison.
 
     Returns:
         The Markdown report as a string. No emoji.
@@ -496,7 +598,10 @@ def build_report(
         "",
         f"Strategy: {strategy_name}",
         "",
-        _headline(wf, mc, strategy_name, data_source, data_range, rules),
+        _headline(
+            wf, mc, strategy_name, data_source, data_range, rules,
+            baseline_pass_rate=baseline_pass_rate,
+        ),
         _honesty(list(surfaces or [])),
         _risk_geometry_table(list(surfaces or []), mc),
         _oos_table(wf),

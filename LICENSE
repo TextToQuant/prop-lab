@@ -1,0 +1,41 @@
+MIT License
+
+Copyright (c) 2026 prop-lab contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTICE ON PROVENANCE
+
+This package is an independent implementation. No source code was taken
+from any other repository. The public prior art that informed the METHOD is
+credited in docs/PRIOR-ART.md and in the Provenance section of every
+generated report, with each project's license named there.
+
+In particular: the bootstrap-resampling approach and the risk-geometry
+framing are credited to the prop-risk-geometry project
+(https://github.com/dsilva42/prop-risk-geometry), which carries no license
+file and is therefore all rights reserved. It is cited as the origin of the
+idea, not copied. Every other project whose work is referenced -- LuxAlgo,
+MaverickHQ, greybeard-code, jalv92, lhenriet-bit, Makeph and gabrielee5 --
+is MIT licensed, and none of their code was copied either.
+
+This is research tooling. It is not financial advice and it does not
+predict the future. See the README for what the numbers mean.

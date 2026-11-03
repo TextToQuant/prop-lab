@@ -61,7 +61,7 @@ def stub_mc(monkeypatch):
     """
     calls = []
 
-    def fake(pnl_r_array, rules, risk_geometry, n_attempts, seed):
+    def fake(pnl_r_array, rules, risk_geometry, n_attempts, seed, session_dates=None):
         calls.append((risk_geometry, n_attempts, seed, len(pnl_r_array)))
         return 0.42
 

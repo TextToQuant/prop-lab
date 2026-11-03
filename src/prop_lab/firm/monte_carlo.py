@@ -84,6 +84,8 @@ import numpy as np
 from .rules import FirmRules
 
 __all__ = [
+    "RULES_STALENESS_DAYS",
+    "rules_staleness_warning",
     "BootstrapTrade",
     "PathResult",
     "MCSummary",
@@ -424,10 +426,19 @@ def bootstrap_stationary(
     p = 1.0 / float(mean_block_length)
 
     out: list[float] = []
-    # Start each block at a uniformly random index so the resampled
-    # series is stationary rather than cyclically anchored.
-    idx = int(rng.integers(0, size))
     while len(out) < n:
+        # Each block starts at a UNIFORMLY RANDOM index, and a block is a
+        # run of consecutive values wrapping around the end of the
+        # series. That is what makes the result stationary.
+        #
+        # The starting index must be redrawn for every block. Walking
+        # the series cyclically from a single start instead makes the
+        # output a permutation of the whole source array, which pins the
+        # resampled mean to the source mean exactly and gives the
+        # resampled mean ZERO sampling variability. A bootstrap whose
+        # mean never varies cannot estimate the uncertainty of that
+        # mean, which is the one thing a bootstrap is for.
+        idx = int(rng.integers(0, size))
         length = int(rng.geometric(p))
         for _ in range(length):
             out.append(float(pnl_r_array[idx]))
@@ -695,6 +706,122 @@ def simulate_challenge(
     )
 
 
+#: How old a ruleset's checked date may be before the run warns about it.
+#: Firms change their terms without announcing it, and a pass rate
+#: computed against a stale ruleset is a number about a challenge that
+#: may no longer exist.
+RULES_STALENESS_DAYS: int = 90
+
+
+def rules_staleness_warning(rules: FirmRules, *, today: Any = None) -> str:
+    """Return a warning if the ruleset has not been checked recently.
+
+    Args:
+        rules: the firm ruleset.
+        today: the date to measure against. Defaults to today. Injectable
+            so the check can be tested without depending on the clock.
+
+    Returns:
+        A warning string, or an empty string when the ruleset is fresh
+        or carries no date at all.
+    """
+    checked = getattr(rules, "rules_checked", "")
+    if not checked:
+        return (
+            f"ruleset {getattr(rules, 'name', 'unknown')!r} has no "
+            "'rules_checked' date. A ruleset without a date on it is a "
+            "silent expiry waiting to happen."
+        )
+
+    import datetime as dt
+
+    try:
+        checked_on = dt.date.fromisoformat(str(checked))
+    except (TypeError, ValueError):
+        return (
+            f"ruleset {getattr(rules, 'name', 'unknown')!r} has an "
+            f"unparseable 'rules_checked' value {checked!r}; the staleness "
+            "of this ruleset cannot be checked."
+        )
+
+    if today is None:
+        today = dt.date.today()
+    elif isinstance(today, dt.datetime):
+        today = today.date()
+
+    age = (today - checked_on).days
+    if age > RULES_STALENESS_DAYS:
+        return (
+            f"ruleset {getattr(rules, 'name', 'unknown')!r} was last checked "
+            f"on {checked}, {age} days ago (more than "
+            f"{RULES_STALENESS_DAYS}). Firms change their rules without "
+            "announcing it, so re-verify the numbers before trusting this "
+            "pass rate."
+        )
+    return ""
+
+
+
+def zero_edge_baseline(
+    rules: FirmRules,
+    *,
+    n_trades: int = 2000,
+    risk_geometry: str = "frac_2pct",
+    n_attempts: int = 2000,
+    seed: int = 42,
+) -> float:
+    """The pass rate a strategy with NO edge would get under these rules.
+
+    This is the number every other pass rate should be read against.
+
+    A challenge is not a coin toss you have to win 50 percent of the time
+    to pass. The profit target sits above the starting balance and the
+    trailing drawdown sits below it, so a random walk that happens to run
+    up early can reach the target before it ever retraces enough to
+    breach the floor. For the APEX 50K EOD rules that works out at
+    roughly a quarter of attempts.
+
+    So "26 percent pass rate" is not a good score. It is roughly what a
+    strategy with no edge at all scores, and the question is how far
+    above that baseline the strategy sits.
+
+    The synthetic trade array is built to have a mean R of EXACTLY zero
+    (equal numbers of +1R and -1R, shuffled), so the baseline is a
+    property of the RULES, not of any particular strategy or of sampling
+    noise in the trade array.
+
+    Args:
+        rules: the firm ruleset.
+        n_trades: length of the synthetic trade array. It only sets how
+            many trades the resampling pool holds; the mean is zero by
+            construction either way.
+        risk_geometry: the sizing rule to evaluate the baseline under.
+        n_attempts: Monte Carlo attempts.
+        seed: RNG seed.
+
+    Returns:
+        The pass rate as a float in ``[0, 1]``.
+    """
+    if n_trades < 2:
+        raise ValueError(f"n_trades must be at least 2, got {n_trades!r}")
+
+    half = n_trades // 2
+    arr = np.concatenate(
+        [np.ones(half, dtype=float), -np.ones(n_trades - half, dtype=float)]
+    )
+    rng = np.random.default_rng(seed)
+    rng.shuffle(arr)
+
+    summary = monte_carlo_challenge(
+        arr,
+        rules,
+        risk_geometry=risk_geometry,
+        n_attempts=n_attempts,
+        seed=seed,
+    )
+    return float(summary.pass_rate)
+
+
 # ----------------------------------------------------------------------
 # Monte Carlo over many attempts
 # ----------------------------------------------------------------------
@@ -830,6 +957,11 @@ def monte_carlo_challenge(
     finals_arr = np.array(finals, dtype=float)
     ci_low, ci_high = wilson_interval(n_pass, n)
     pass_rate = n_pass / n if n else 0.0
+
+    # -- is the ruleset itself still current? --------------------------
+    stale = rules_staleness_warning(rules)
+    if stale:
+        msg.append(stale)
 
     # -- diagnostic: how much is the i.i.d. bootstrap flattering this? --
     if compare_iid and resampling == RESAMPLING_BLOCK:

@@ -90,6 +90,7 @@ import numpy as np
 import pandas as pd
 
 from ..core import Trade, run_backtest
+from .significance import EdgeTest, test_edge
 
 __all__ = [
     "WFWindow",
@@ -117,7 +118,11 @@ MIN_OOS_TRADES_FOR_CONCLUSION: int = 30
 #: explicitly (usually noise or a conservative training window).
 OOS_BETTER_IS_NOTE_THRESHOLD: float = -0.05
 
-_VERDICTS = ("holds", "degrades", "fails")
+#: The verdict vocabulary. ``no_edge`` was added when the edge-significance
+#: test showed that ``holds`` could be returned for a strategy whose edge is
+#: statistically indistinguishable from zero -- a verdict that reads as
+#: "the edge survived" when there was no edge to survive.
+_VERDICTS = ("holds", "degrades", "fails", "no_edge")
 
 
 # ----------------------------------------------------------------------
@@ -203,6 +208,14 @@ class WFResult:
     is_win_rate: float = 0.0
     n_oos_trades: int = 0
     n_is_trades: int = 0
+    # Edge significance. The verdict is refined by these: a strategy whose
+    # out-of-sample mean R is indistinguishable from zero gets the verdict
+    # "no_edge" rather than "holds".
+    edge_significant: bool = False
+    edge_conclusive: bool = False
+    edge_ci_low: float = 0.0
+    edge_ci_high: float = 0.0
+    edge_t_statistic: float = 0.0
 
     def summary(self) -> str:
         """One-line human summary of the verdict."""
@@ -211,6 +224,7 @@ class WFResult:
             f"IS mean R={self.is_mean_r:.3f} (n={self.n_is_trades}) "
             f"OOS mean R={self.oos_mean_r:.3f} (n={self.n_oos_trades}) "
             f"degradation={self.degradation:.3f} "
+            f"edge CI=[{self.edge_ci_low:+.4f}, {self.edge_ci_high:+.4f}] "
             f"windows={self.n_windows}"
         )
 
@@ -264,6 +278,46 @@ def _verdict(degradation: float, oos_mean_r: float) -> str:
     if degradation <= DEGRADATION_DEGRADES_MAX:
         return "degrades"
     return "fails"
+
+
+def _verdict_with_significance(
+    degradation: float,
+    oos_mean_r: float,
+    edge_significant: bool,
+    edge_conclusive: bool,
+) -> str:
+    """Verdict, refined by whether the edge is distinguishable from zero.
+
+    The degradation-only verdict answers "did the edge survive out of
+    sample". On its own it cannot answer "was there an edge", and it
+    returns ``holds`` for a strategy whose out-of-sample mean R is
+    indistinguishable from zero -- which reads as "the edge survived" when
+    there was never an edge to survive.
+
+    So the stability verdict is computed first, and then downgraded to
+    ``no_edge`` when the edge itself is not established. ``no_edge`` is
+    deliberately distinct from ``fails``: ``fails`` says the edge degraded,
+    ``no_edge`` says no edge was detected in the first place. A strategy
+    with no edge and no degradation is not a strategy that failed
+    out of sample; it is a strategy that never had anything to fail.
+
+    Args:
+        degradation: ``is_mean_r - oos_mean_r``.
+        oos_mean_r: pooled mean R of the out-of-sample trades.
+        edge_significant: True when the confidence interval on the mean R
+            excludes zero.
+        edge_conclusive: True when the sample was large enough for the
+            interval to mean anything.
+
+    Returns:
+        One of ``"holds"``, ``"degrades"``, ``"fails"`` or ``"no_edge"``.
+    """
+    base = _verdict(degradation, oos_mean_r)
+    if base in ("fails", "degrades"):
+        return base
+    if edge_conclusive and not edge_significant:
+        return "no_edge"
+    return base
 
 
 # ----------------------------------------------------------------------
@@ -427,7 +481,19 @@ def walk_forward(
     oos_mean, oos_win, oos_total, n_oos = _stats(all_oos_trades)
 
     degradation = is_mean - oos_mean
-    verdict = _verdict(degradation, oos_mean)
+
+    # -- edge significance ---------------------------------------------
+    # The degradation verdict alone cannot say whether there WAS an edge.
+    # Test it before deciding the verdict, so a strategy with no
+    # detectable edge is never reported as "holds".
+    oos_rs = np.array([t.pnl_r for t in all_oos_trades], dtype=float)
+    edge = test_edge(oos_rs, seed=42)
+    verdict = _verdict_with_significance(
+        degradation,
+        oos_mean,
+        edge_significant=edge.significant,
+        edge_conclusive=edge.conclusive,
+    )
 
     # -- warnings ------------------------------------------------------
     warnings: list[str] = []
@@ -461,6 +527,13 @@ def walk_forward(
             "lower than in sample, so part of the in-sample result does not "
             "generalise."
         )
+
+    # The edge warning is mandatory and comes first: it is the caveat that
+    # changes how the verdict should be read.
+    edge_warning = edge.warning()
+    if edge_warning:
+        warnings.insert(0, edge_warning)
+    warnings.extend(edge.warnings)
 
     if degradation < OOS_BETTER_IS_NOTE_THRESHOLD:
         warnings.append(
@@ -497,6 +570,11 @@ def walk_forward(
         is_win_rate=is_win,
         n_oos_trades=n_oos,
         n_is_trades=n_is,
+        edge_significant=edge.significant,
+        edge_conclusive=edge.conclusive,
+        edge_ci_low=edge.ci_low,
+        edge_ci_high=edge.ci_high,
+        edge_t_statistic=edge.t_statistic,
     )
 
 

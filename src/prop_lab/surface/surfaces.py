@@ -136,6 +136,13 @@ class SurfaceSpec:
         z_name: name of the z axis, e.g. ``'pass_rate'``.
         z_provenance: ``AXIS_MEASURED`` or ``AXIS_MODELLED``.
         note: a plain-English note on what this surface is and is not.
+        operating_point: optional ``(x_value, y_value)`` of the strategy
+            the surface was built for. When set, the renderer marks where
+            that strategy actually sits on the grid, so a user can see
+            whether their own parameters are even on the surface they are
+            looking at.
+        operating_point_label: how to refer to the operating point in
+            labels.
     """
 
     x_name: str
@@ -147,6 +154,8 @@ class SurfaceSpec:
     z_name: str
     z_provenance: str
     note: str = ""
+    operating_point: tuple[float, float] | None = None
+    operating_point_label: str = "this strategy"
 
     def provenance_rows(self) -> list[tuple[str, str, str]]:
         """Return one ``(axis_name, provenance, explanation)`` row per axis.
@@ -356,9 +365,79 @@ class Surface:
                     ),
                 )
 
+        self._mark_operating_point(ax, xi=len(self.spec.x_values), yi=len(self.spec.y_values))
         ax.set_title(self._title_text(), fontsize=9)
         fig.tight_layout()
         return fig
+
+    def _mark_operating_point(self, ax, *, xi: int, yi: int) -> None:
+        """Mark where the strategy actually sits on the grid.
+
+        A user looking at a grid of assumed win rates needs to know
+        whether their own strategy is even on it. When the operating
+        point falls outside the grid the marker is drawn at the edge and
+        labelled as being off the grid, because a marker silently clamped
+        to the nearest cell would read as "this cell is my strategy".
+        """
+        op = self.spec.operating_point
+        if op is None:
+            return
+        import matplotlib
+
+        x_val, y_val = float(op[0]), float(op[1])
+        x_values = [float(v) for v in self.spec.x_values]
+        y_values = [float(v) for v in self.spec.y_values]
+
+        if not x_values or not y_values:
+            return
+
+        def _nearest(values: list[float], target: float) -> tuple[float, bool]:
+            best = min(values, key=lambda v: abs(v - target))
+            inside = min(values) <= target <= max(values)
+            return best, inside
+
+        x_near, x_inside = _nearest(x_values, x_val)
+        y_near, y_inside = _nearest(y_values, y_val)
+
+        # Pixel position of the nearest grid value.
+        x_index = x_values.index(x_near)
+        y_index = y_values.index(y_near)
+        on_grid = x_inside and y_inside
+
+        ax.scatter(
+            [x_index],
+            [y_index],
+            marker="*",
+            s=420,
+            facecolors="none",
+            edgecolors=matplotlib.colormaps["plasma"](0.98) if on_grid else "white",
+            linewidths=2.0,
+            zorder=5,
+        )
+        label = (
+            f"{self.spec.operating_point_label}: "
+            f"{x_val:.0%} win, {y_val:.2f} R:R"
+            if on_grid
+            else (
+                f"{self.spec.operating_point_label} is OFF this grid "
+                f"(win {x_val:.0%}, R:R {y_val:.2f})"
+            )
+        )
+        ax.annotate(
+            label,
+            xy=(x_index, y_index),
+            xytext=(6, 8),
+            textcoords="offset points",
+            fontsize=7,
+            color="white" if not on_grid else "black",
+            bbox={
+                "boxstyle": "round,pad=0.3",
+                "facecolor": "black",
+                "alpha": 0.75,
+                "edgecolor": "none",
+            },
+            zorder=6,
+        )
 
     @staticmethod
     def _annotation_colour(normalised: float) -> str:
@@ -436,6 +515,7 @@ def _simulate_pass_rate(
     risk_geometry: str,
     n_attempts: int,
     seed: int,
+    session_dates: list[str] | None = None,
 ) -> float:
     """Run the Monte Carlo challenge layer and return the pass rate.
 
@@ -481,6 +561,7 @@ def _simulate_pass_rate(
             risk_geometry=risk_geometry,
             n_attempts=n_attempts,
             seed=seed,
+            session_dates=session_dates,
         )
     except TypeError as exc:
         message = str(exc)
@@ -641,6 +722,7 @@ def risk_geometry_surface(
     risk_geometries: Sequence[str] | None = None,
     n_attempts: int = 2000,
     seed: int = 42,
+    session_dates: list[str] | None = None,
 ) -> Surface:
     """Build the risk-geometry surface: sizing rules against firm rulesets.
 
@@ -680,7 +762,9 @@ def risk_geometry_surface(
 
     for i, geometry in enumerate(geometries):
         for j, ruleset in enumerate(rulesets):
-            rate = _simulate_pass_rate(arr, ruleset, geometry, n_attempts, seed)
+            rate = _simulate_pass_rate(
+                arr, ruleset, geometry, n_attempts, seed, session_dates
+            )
             z[i, j] = rate
             low, high = _wilson(rate * n_attempts, n_attempts)
             ci_low[i, j] = low
@@ -724,6 +808,7 @@ def rr_surface(
     measured: bool = True,
     strategy_factory: Any = None,
     df: Any = None,
+    session_dates: list[str] | None = None,
 ) -> Surface:
     """Build the R:R surface: reward-to-risk against risk geometry.
 
@@ -806,7 +891,9 @@ def rr_surface(
     ci_high = np.zeros_like(z)
     for i, arr in enumerate(per_rr_arrays):
         for j, geometry in enumerate(geometries):
-            rate = _simulate_pass_rate(arr, rules, geometry, n_attempts, seed)
+            rate = _simulate_pass_rate(
+                arr, rules, geometry, n_attempts, seed, session_dates
+            )
             z[i, j] = rate
             low, high = _wilson(rate * n_attempts, n_attempts)
             ci_low[i, j] = low
@@ -858,6 +945,9 @@ def winrate_surface(
     rr_values: Sequence[float] | None = None,
     n_attempts: int = 2000,
     seed: int = 42,
+    session_dates: list[str] | None = None,
+    operating_point: tuple[float, float] | None = None,
+    operating_point_label: str = "this strategy",
 ) -> Surface:
     """Build the win-rate surface: assumed win rate against R:R.
 
@@ -893,6 +983,15 @@ def winrate_surface(
         rr_values: the R:R values. Defaults to :data:`DEFAULT_RR_VALUES`.
         n_attempts: Monte Carlo attempts per cell.
         seed: RNG seed.
+        session_dates: optional per-trade session labels, forwarded to the
+            Monte Carlo layer so this surface uses the same resampling as
+            the headline number.
+        operating_point: optional ``(win_rate, rr_ratio)`` of the strategy
+            that produced ``pnl_r_array``. When given, the surface records
+            it so the renderer can mark where the user actually sits on a
+            grid they did not choose.
+        operating_point_label: how to refer to the operating point in
+            labels and warnings.
 
     Returns:
         A :class:`Surface` whose x and y axes are ``AXIS_MODELLED``.
@@ -911,7 +1010,7 @@ def winrate_surface(
         for j, rr in enumerate(rrs):
             synthetic = _synthetic_two_point_pnl(rate, rr, seed)
             pass_rate = _simulate_pass_rate(
-                synthetic, rules, "frac_2pct", n_attempts, seed
+                synthetic, rules, "frac_2pct", n_attempts, seed, session_dates
             )
             z[i, j] = pass_rate
             low, high = _wilson(pass_rate * n_attempts, n_attempts)
@@ -947,6 +1046,17 @@ def winrate_surface(
         "z": "pass rate",
         "name": "win_rate x rr_ratio",
     }
+    if operating_point is not None:
+        op_win, op_rr = float(operating_point[0]), float(operating_point[1])
+        spec.operating_point = (op_win, op_rr)
+        spec.operating_point_label = operating_point_label
+        spec.note += (
+            f" The strategy that produced the real trade distribution sits "
+            f"at win rate {op_win:.1%} and R:R {op_rr:.2f}. The grid may not "
+            f"contain that point; where it does not, the marked position is "
+            f"an interpolation between the nearest cells and the surface "
+            f"value there is NOT the measured pass rate for the strategy."
+        )
     return Surface(spec=spec, z=z, axis_labels=axis_labels, ci_low=ci_low, ci_high=ci_high)
 
 
@@ -1006,6 +1116,31 @@ def surface_table(surfaces: Sequence[Surface]) -> str:
         lines.append(f"  z axis: {spec.z_name} [{spec.z_provenance}]")
         lines.append(f"  x values: {', '.join(str(v) for v in spec.x_values)}")
         lines.append(f"  y values: {', '.join(str(v) for v in spec.y_values)}")
+        if spec.operating_point is not None:
+            x_val, y_val = spec.operating_point
+            x_values = [float(v) for v in spec.x_values]
+            y_values = [float(v) for v in spec.y_values]
+            on_x = bool(x_values) and min(x_values) <= x_val <= max(x_values)
+            on_y = bool(y_values) and min(y_values) <= y_val <= max(y_values)
+            if on_x and on_y:
+                lines.append(
+                    f"  operating point: {spec.operating_point_label} is at "
+                    f"{x_val:.0%} on {spec.x_name}, {y_val:.2f} on {spec.y_name} "
+                    f"(on this grid)"
+                )
+            else:
+                missing = []
+                if not on_x:
+                    missing.append(spec.x_name)
+                if not on_y:
+                    missing.append(spec.y_name)
+                lines.append(
+                    f"  operating point: {spec.operating_point_label} is at "
+                    f"{x_val:.0%} on {spec.x_name}, {y_val:.2f} on {spec.y_name} "
+                    f"-- OFF this grid on {', '.join(missing)}. The nearest cell "
+                    f"is an interpolation, not this strategy's measured "
+                    f"result."
+                )
         if spec.note:
             lines.append(f"  note: {spec.note}")
         lines.append("")

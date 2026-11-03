@@ -2,10 +2,17 @@
 
 Exposes the purged walk-forward validator: :func:`walk_forward`,
 :func:`walk_forward_table` and the :class:`WFWindow` / :class:`WFResult`
-containers.
+containers, plus the edge-significance test in
+:mod:`prop_lab.validate.significance`.
 """
 from __future__ import annotations
 
+from .significance import (
+    DEFAULT_BOOTSTRAP_ATTEMPTS,
+    MIN_TRADES_FOR_SIGNIFICANCE,
+    EdgeTest,
+    test_edge,
+)
 from .walkforward import (
     DEGRADATION_DEGRADES_MAX,
     DEGRADATION_HOLDS_MAX,
@@ -24,4 +31,8 @@ __all__ = [
     "DEGRADATION_HOLDS_MAX",
     "DEGRADATION_DEGRADES_MAX",
     "MIN_OOS_TRADES_FOR_CONCLUSION",
+    "EdgeTest",
+    "test_edge",
+    "MIN_TRADES_FOR_SIGNIFICANCE",
+    "DEFAULT_BOOTSTRAP_ATTEMPTS",
 ]

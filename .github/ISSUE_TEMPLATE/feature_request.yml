@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest an improvement to the tooling or the method
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to be able to do?
+      description: Describe the outcome you want, not the implementation.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the pipeline?
+      options:
+        - Data
+        - Strategy authoring
+        - Backtest
+        - Out-of-sample validation
+        - Monte Carlo simulation
+        - Surfaces
+        - Report
+        - Command line interface
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: honesty
+    attributes:
+      label: How does this interact with the honesty rules?
+      description: >
+        The honesty contract is the product. If your idea makes a number
+        look better without making it more true, say so and explain why
+        you think it is still an improvement. If it changes what a
+        measured or modelled axis means, that needs careful discussion.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried instead?
+    validations:
+      required: false
