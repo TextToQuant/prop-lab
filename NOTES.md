@@ -424,13 +424,15 @@ eslazarev/purged-cross-validation, LuxAlgo/prop-firm-sim.
 
 ## Local commands
 
+Paths below are relative to the repository root. The MNQ 5m dataset is not
+part of this repository; point `PROPLAB_MNQ_5M` at your own copy.
+
 ```bash
-cd <repo-root>/prop-lab
 .venv/bin/python -m pytest -q
-PROPLAB_MNQ_5M=<path-to>/nq-apex-strategy/data/MNQ_5m.csv \
+PROPLAB_MNQ_5M=<path-to>/MNQ_5m.csv \
   .venv/bin/python scripts/baseline_check.py
 .venv/bin/proplab report \
   --strategy examples/strategies/trend_continuation.py:TrendContinuation \
-  --data <path-to>/nq-apex-strategy/data/MNQ_5m.csv \
+  --data <path-to>/MNQ_5m.csv \
   --firm apex-50k-eod --out reports/
 ```
