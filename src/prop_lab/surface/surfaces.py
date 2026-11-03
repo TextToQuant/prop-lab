@@ -423,18 +423,29 @@ class Surface:
                 f"(win {x_val:.0%}, R:R {y_val:.2f})"
             )
         )
+        # Place the label so it does not sit on top of a cell
+        # annotation. Offsetting up and to the right covers the cell to
+        # the upper-right, so the label is pushed toward whichever edge
+        # of the plot has room: upward when the marker is in the lower
+        # half of the grid, downward when it is in the upper half, and
+        # toward whichever side keeps it inside the axes.
+        offset_y = 14 if y_index < len(y_values) / 2 else -14
+        offset_x = -8 if x_index > len(x_values) / 2 else 8
         ax.annotate(
             label,
             xy=(x_index, y_index),
-            xytext=(6, 8),
+            xytext=(offset_x, offset_y),
             textcoords="offset points",
             fontsize=7,
-            color="white" if not on_grid else "black",
+            color="white",
+            ha="left" if offset_x > 0 else "right",
+            va="bottom" if offset_y > 0 else "top",
             bbox={
                 "boxstyle": "round,pad=0.3",
                 "facecolor": "black",
-                "alpha": 0.75,
-                "edgecolor": "none",
+                "alpha": 0.85,
+                "edgecolor": "white",
+                "linewidth": 0.5,
             },
             zorder=6,
         )
