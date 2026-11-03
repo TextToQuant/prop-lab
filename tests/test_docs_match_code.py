@@ -329,3 +329,43 @@ def test_spec_layout_omits_modules_that_were_never_there():
         assert absent not in SPEC, (
             f"SPEC.md lists {absent}, which is not in the package"
         )
+
+
+# --------------------------------------------------------------------------
+# The code's own docstrings
+# --------------------------------------------------------------------------
+
+def test_walkforward_docstring_documents_every_verdict():
+    """The module's own docstring must name every verdict it can return.
+
+    A user reading `help(prop_lab.validate.walk_forward)` learns the
+    vocabulary from the docstring. If it omits one, the documentation
+    contradicts the code in the place a reader is most likely to look.
+    """
+    from prop_lab.validate import walkforward
+
+    doc = walkforward.__doc__ or ""
+    assert doc, "the walkforward module has no docstring"
+
+    for verdict in _real_verdicts():
+        assert f'"{verdict}"' in doc, (
+            f"the walkforward docstring does not document the "
+            f"{verdict!r} verdict"
+        )
+
+
+def test_walkforward_docstring_mentions_the_edge_refinement():
+    """The docstring must explain that the verdict is refined."""
+    from prop_lab.validate import walkforward
+
+    doc = (walkforward.__doc__ or "").lower()
+    assert "no_edge" in doc
+    assert "significance" in doc or "distinguishable from zero" in doc
+
+
+def test_significance_module_docstring_exists():
+    """The edge test must be documented where it lives."""
+    from prop_lab.validate import significance
+
+    assert significance.__doc__, "the significance module has no docstring"
+    assert "bootstrap" in significance.__doc__.lower()

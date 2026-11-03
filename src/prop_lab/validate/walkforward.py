@@ -72,6 +72,18 @@ Verdict thresholds (documented constants, SPEC section 4)
 * ``degradation <= 0.30``        -> ``"degrades"``
 * otherwise                      -> ``"fails"``
 
+Those are the *stability* thresholds. The verdict the caller receives is
+then refined by the edge-significance test, which can downgrade a
+``holds`` to ``no_edge``. The vocabulary is therefore:
+
+* ``"holds"``    the edge survived out of sample AND is distinguishable
+                 from zero
+* ``"degrades"`` there is an edge, but it shrank out of sample
+* ``"no_edge"``  no edge was detected; the confidence interval on the
+                 mean R includes zero
+* ``"fails"``    the out-of-sample mean R is zero or negative, or the
+                 edge degraded badly
+
 ``degradation`` is ``is_mean_r - oos_mean_r``: the mean R per trade the
 strategy lost between in-sample and out-of-sample.
 
