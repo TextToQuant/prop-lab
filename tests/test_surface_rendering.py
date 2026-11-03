@@ -67,6 +67,70 @@ def test_heatmap_annotations_land_on_their_own_cells():
         plt.close(fig)
 
 
+def test_heatmap_annotation_colour_is_readable_against_its_cell():
+    """Every annotation must have a readable contrast against its cell.
+
+    The heatmap uses the ``plasma`` colormap, whose dark end is a deep
+    blue-purple. Fixed black text on that background has a contrast
+    ratio of 1.1:1, which is invisible; WCAG AA wants 4.5:1.
+
+    The colour has to be chosen from the luminance of the cell the text
+    actually sits on, so this test reproduces the colour for each
+    annotation and checks the contrast of the chosen colour against
+    that cell.
+    """
+    import matplotlib
+
+    def luminance(rgb: tuple) -> float:
+        def channel(c: float) -> float:
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+        r, g, b = (float(c) for c in rgb[:3])
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+    surface = _surface(4, 3)
+    fig = surface.to_heatmap()
+    try:
+        ax = fig.axes[0]
+        grid = np.asarray(surface.z, dtype=float).T
+        vmin, vmax = float(np.nanmin(grid)), float(np.nanmax(grid))
+        span = vmax - vmin
+
+        for text_artist in ax.texts:
+            x, y = (int(round(v)) for v in text_artist.get_position())
+            position = (grid[y, x] - vmin) / span if span > 0 else 0.5
+            background = matplotlib.colormaps["plasma"](position)
+            bg_luminance = luminance(background)
+
+            colour = text_artist.get_color()
+            if colour == "white":
+                fg_luminance = 1.0
+            elif colour == "black":
+                fg_luminance = 0.0
+            else:
+                fg_luminance = luminance(matplotlib.colors.to_rgba(colour))
+
+            lighter = max(fg_luminance, bg_luminance)
+            darker = min(fg_luminance, bg_luminance)
+            contrast = (lighter + 0.05) / (darker + 0.05)
+            assert contrast >= 4.5, (
+                f"annotation at ({x}, {y}) has contrast {contrast:.2f}:1, "
+                f"colour {colour!r} on background luminance {bg_luminance:.3f}"
+            )
+    finally:
+        plt.close(fig)
+
+
+def test_annotation_colour_switches_across_the_ramp():
+    """The colour must actually depend on the cell, not be fixed."""
+    assert Surface._annotation_colour(0.0) == "white"
+    assert Surface._annotation_colour(1.0) == "black"
+    # Mid-ramp: one of the two, but it must not be the same on both ends.
+    mid = Surface._annotation_colour(0.5)
+    assert mid in {"white", "black"}
+    assert Surface._annotation_colour(0.0) != Surface._annotation_colour(1.0)
+
+
 def test_heatmap_with_one_ruleset_row_keeps_annotations_inside_the_image():
     """The case that produced stray numbers in the margin.
 

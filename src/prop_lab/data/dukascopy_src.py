@@ -44,6 +44,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .schema import _to_epoch_seconds
+
 __all__ = [
     "fetch",
     "coverage_report",
@@ -124,8 +126,18 @@ def _decode_hour(payload: bytes, hour: datetime, divisor: int) -> pd.DataFrame:
     if usable <= 0:
         return pd.DataFrame(columns=["time", "price", "volume"])
 
-    records = struct.unpack(BI5_RECORD * (usable // record_size), payload[:usable])
-    columns = list(zip(*[iter(records)] * 5))
+    # The byte-order prefix ">" is only legal at the very start of a
+    # format string, so the format must NOT be repeated by string
+    # multiplication (">IIIff>IIIff" raises "bad char in struct
+    # format").
+    #
+    # ``Struct.unpack_from`` also only unpacks a SINGLE record, so it
+    # cannot be used to read the whole file. ``iter_unpack`` walks every
+    # fixed-size record from an offset, which is exactly what the
+    # format needs.
+    record_struct = struct.Struct(BI5_RECORD)
+    records = record_struct.iter_unpack(payload[:usable])
+    columns = list(zip(*records))
 
     ms = np.array(columns[0], dtype=np.int64)
     ask = np.array(columns[1], dtype=np.float64) / float(divisor)
@@ -252,7 +264,10 @@ def _resample_ticks(ticks: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         }
     ).dropna(subset=["open"])
     out = out.reset_index()
-    out["time"] = (out["_ts"].astype("int64") // 10**9).astype("int64")
+    # The resampled index keeps the source resolution (microseconds in
+    # pandas 3.0), so convert it to seconds explicitly rather than
+    # assuming a nanosecond divisor.
+    out["time"] = _to_epoch_seconds(pd.Series(out["_ts"]))
     out = out.drop(columns=["_ts"])
     out = out.sort_values("time", kind="mergesort").reset_index(drop=True)
     for column in ("open", "high", "low", "close", "volume"):

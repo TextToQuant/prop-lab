@@ -45,6 +45,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .schema import _to_epoch_seconds
+
 __all__ = ["fetch", "INTERVALS", "YAHOO_INTERVALS", "is_continuous_future"]
 
 #: Timeframes this adapter accepts.
@@ -111,6 +113,29 @@ def _flatten_columns(frame: pd.DataFrame) -> pd.DataFrame:
     # Drop duplicated names produced by the flattening (e.g. two tickers).
     out = out.loc[:, ~out.columns.duplicated()]
     return out
+
+
+def _epoch_seconds_column(index: pd.DatetimeIndex) -> np.ndarray:
+    """Convert a datetime index to int64 epoch seconds.
+
+    The Yahoo daily index arrives as ``datetime64[s]``, and dividing it
+    by a hard-coded 10**9 collapses every timestamp to the same value,
+    which then dedupes 1500 rows down to one. The conversion therefore
+    has to respect the incoming resolution.
+
+    The result is returned as a plain ndarray rather than a Series.
+    Assigning a Series into a frame makes pandas align on index labels,
+    and because ``pd.to_datetime`` resets the index internally, the
+    labels would not match and the column would silently fill with NaN.
+    Returning the values keeps the assignment positional.
+
+    Args:
+        index: the datetime index to convert.
+
+    Returns:
+        An int64 ndarray of UNIX seconds UTC.
+    """
+    return _to_epoch_seconds(pd.Series(index)).to_numpy()
 
 
 def _normalise_field(frame: pd.DataFrame, name: str) -> pd.Series:
@@ -245,11 +270,9 @@ def fetch(
             index = index.tz_localize("UTC")
         else:
             index = index.tz_convert("UTC")
-        frame["time"] = (index.astype("int64") // 10**9).astype("int64")
     else:
-        frame["time"] = (
-            pd.to_datetime(index, utc=True).astype("int64") // 10**9
-        ).astype("int64")
+        index = pd.to_datetime(index, utc=True)
+    frame["time"] = _epoch_seconds_column(index)
 
     for name in ("open", "high", "low", "close", "volume"):
         frame[name] = pd.to_numeric(frame[name], errors="coerce").astype("float64")

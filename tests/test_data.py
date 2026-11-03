@@ -404,6 +404,15 @@ def test_network_yahoo_nq_f_daily():
     for column in STANDARD_COLUMNS:
         assert column in df.columns
     assert df["close"].gt(0).all()
+    # Every timestamp must be distinct. This is the assertion that
+    # catches the bug where the datetime64[s] index was divided by a
+    # hard-coded 10**9, which collapsed 1511 timestamps to the value 1
+    # and left a single row.
+    assert df["time"].nunique() == len(df)
+    # And the timestamps must actually be epoch seconds, not
+    # microseconds or nanoseconds.
+    assert df["time"].between(1_500_000_000, 2_000_000_000).all()
+    assert df["time"].is_monotonic_increasing
 
 
 @pytest.mark.network
@@ -420,3 +429,12 @@ def test_network_dukascopy_usa30_two_hours():
     assert report["hours_requested"] == 2
     assert report["instrument"] == "USA30IDXUSD"
     assert report["timeframe"] == "5m"
+    # Ticks must actually have decoded into bars. This is the assertion
+    # that catches the struct format bug, where the decoder raised
+    # instead of returning rows.
+    assert len(df) > 0
+    for column in STANDARD_COLUMNS:
+        assert column in df.columns
+    assert df["close"].gt(0).all()
+    assert df["time"].is_monotonic_increasing
+    assert df["time"].nunique() == len(df)

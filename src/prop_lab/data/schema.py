@@ -110,15 +110,38 @@ def _to_epoch_seconds(values: pd.Series) -> pd.Series:
         numeric = numeric.where(numeric.abs() < 1e11, numeric / 1000.0)
         return numeric.astype("int64")
 
+    original_index = values.index
     parsed = pd.to_datetime(values, errors="coerce", utc=True)
+    # ``pd.to_datetime`` on a Series whose VALUES are datetimes returns a
+    # frame with a RESET RangeIndex, because the conversion goes through
+    # a DatetimeIndex internally. That silently breaks every caller
+    # that assigns the result into a frame with a different index:
+    # pandas aligns on index labels, finds no match, and fills the
+    # column with NaN. Restore the original index so the result stays
+    # positionally aligned with the input.
+    parsed.index = original_index
+
     if isinstance(parsed.dtype, pd.DatetimeTZDtype):
         parsed = parsed.dt.tz_convert("UTC")
-    # Pandas 3.0 defaults to microsecond resolution, while older pandas
-    # used nanoseconds. A hard-coded divisor silently produces timestamps
-    # that are off by 1000x, so the resolution is read from the data.
-    unit = getattr(parsed.dtype, "unit", None) or "ns"
-    divisor = {"s": 1, "ms": 10**3, "us": 10**6, "ns": 10**9}[unit]
-    return (parsed.astype("int64") // divisor).astype("int64")
+    # Pandas 3.0 defaults to microsecond resolution, older versions used
+    # nanoseconds, and some feeds deliver second resolution. A
+    # hard-coded divisor silently produces timestamps that are off by
+    # 1000x or 1000000x, and the error is invisible because the rows
+    # still look like valid integers.
+    #
+    # Guessing the unit from ``dtype.unit`` is NOT safe: pandas 3.0
+    # returns None for a ``datetime64[s]`` index, which would fall
+    # through to the nanosecond branch and collapse every timestamp to
+    # a single value. Converting to second resolution explicitly with
+    # ``as_unit("s")`` is correct regardless of the incoming resolution.
+    try:
+        seconds = parsed.dt.as_unit("s").astype("int64")
+    except (AttributeError, TypeError, ValueError):
+        # Fallback for pandas versions without ``as_unit``.
+        unit = getattr(parsed.dtype, "unit", None) or "ns"
+        divisor = {"s": 1, "ms": 10**3, "us": 10**6, "ns": 10**9}[unit]
+        seconds = parsed.astype("int64") // divisor
+    return seconds.astype("int64")
 
 
 def _resolve_time_axis(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
@@ -363,7 +386,10 @@ def resample(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     resampled = resampled.dropna(subset=["open"])
     resampled = resampled.reset_index()
 
-    resampled["time"] = (resampled["_ts"].astype("int64") // 10**9).astype("int64")
+    # Convert the resampled index to second resolution explicitly. The
+    # resample output index keeps the source resolution (microseconds in
+    # pandas 3.0), and dividing by a hard-coded 10**9 would be wrong.
+    resampled["time"] = _to_epoch_seconds(pd.Series(resampled["_ts"]))
     resampled = resampled.drop(columns=["_ts"])
     resampled = resampled.sort_values("time", kind="mergesort").reset_index(drop=True)
 
@@ -402,6 +428,11 @@ def _parse_boundary(value: Any, *, end: bool = False) -> int | None:
         stamp = stamp.tz_convert("UTC")
     if end and len(str(value).strip()) <= 10:
         stamp = stamp + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    # A Timestamp always stores nanoseconds internally, so its ``value``
+    # is always in nanoseconds regardless of the surrounding series
+    # resolution. Dividing by 10**9 is therefore correct HERE, unlike
+    # for a DatetimeIndex whose resolution may be seconds or
+    # microseconds.
     return int(stamp.value // 10**9)
 
 

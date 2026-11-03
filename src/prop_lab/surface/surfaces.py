@@ -313,6 +313,13 @@ class Surface:
         im = ax.imshow(grid, cmap="plasma", aspect="auto", origin="lower")
         fig.colorbar(im, ax=ax, label=self.spec.z_name)
 
+        # Matplotlib normalises the grid against its own min and max.
+        # The annotation colour has to be chosen against the SAME
+        # normalisation, otherwise the text colour and the cell colour
+        # disagree about which end of the ramp a cell sits at.
+        vmin, vmax = float(np.nanmin(grid)), float(np.nanmax(grid))
+        span = vmax - vmin
+
         ax.set_xticks(np.arange(len(self.spec.x_values)))
         ax.set_xticklabels(
             [str(v) for v in self.spec.x_values], rotation=30, ha="right", fontsize=8
@@ -344,12 +351,54 @@ class Surface:
                     ha="center",
                     va="center",
                     fontsize=7,
-                    color="black",
+                    color=self._annotation_colour(
+                        (grid[j, i] - vmin) / span if span > 0 else 0.5
+                    ),
                 )
 
         ax.set_title(self._title_text(), fontsize=9)
         fig.tight_layout()
         return fig
+
+    @staticmethod
+    def _annotation_colour(normalised: float) -> str:
+        """Pick a readable annotation colour for a cell.
+
+        The heatmap uses the ``plasma`` colormap, whose dark end is a
+        deep blue-purple with a relative luminance of about 0.07. Black
+        text on that background has a contrast ratio of 1.1:1, which is
+        invisible in practice; WCAG AA wants 4.5:1.
+
+        So the colour is chosen from the luminance of the cell the text
+        actually sits on: white on the dark end of the ramp, black on
+        the bright end. The switch happens at the point where white
+        text and black text have equal contrast.
+
+        Args:
+            normalised: the cell value mapped into the 0-1 colormap
+                range, as matplotlib would normalise it.
+
+        Returns:
+            ``"white"`` or ``"black"``.
+        """
+        import matplotlib
+
+        position = float(np.clip(normalised, 0.0, 1.0))
+        rgba = matplotlib.colormaps["plasma"](position)
+        red, green, blue = (float(c) for c in rgba[:3])
+
+        # Relative luminance per WCAG 2.x.
+        def channel(c: float) -> float:
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+        luminance = (
+            0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+        )
+        # Contrast of black text and of white text against this
+        # background. Pick whichever is higher.
+        black_contrast = (luminance + 0.05) / 0.05
+        white_contrast = 1.05 / (luminance + 0.05)
+        return "white" if white_contrast > black_contrast else "black"
 
     @staticmethod
     def _format_cell(value: float) -> str:
