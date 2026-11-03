@@ -58,7 +58,6 @@ prop-lab/
 └── docs/
     ├── DATA.md
     ├── HONESTY.md
-    ├── GOAL.md               ← the defect ledger
     └── PRIOR-ART.md          ← the prior-art review
 ```
 

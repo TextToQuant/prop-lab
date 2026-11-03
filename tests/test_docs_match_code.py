@@ -26,9 +26,15 @@ def _read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
 
 
+def _flat(text: str) -> str:
+    """Collapse whitespace, so a phrase split across a line still matches."""
+    return " ".join(text.split()).lower()
+
+
 AGENTS = _read("AGENTS.md")
 SPEC = _read("SPEC.md")
 README = _read("README.md")
+HONESTY = _read("docs/HONESTY.md")
 
 
 # --------------------------------------------------------------------------
@@ -369,3 +375,66 @@ def test_significance_module_docstring_exists():
 
     assert significance.__doc__, "the significance module has no docstring"
     assert "bootstrap" in significance.__doc__.lower()
+
+
+# --------------------------------------------------------------------------
+# docs/HONESTY.md
+# --------------------------------------------------------------------------
+
+def test_honesty_documents_every_verdict():
+    """The honesty argument must use the vocabulary the code returns."""
+    for verdict in _real_verdicts():
+        assert f"`{verdict}`" in HONESTY, (
+            f"HONESTY.md does not document the {verdict!r} verdict"
+        )
+
+
+def test_honesty_documents_the_zero_edge_baseline():
+    """A pass rate is a comparison. The document has to say so."""
+    assert "zero-edge baseline" in _flat(HONESTY)
+    assert "zero_edge_baseline" in HONESTY or "zero-edge baseline" in HONESTY.lower()
+    assert "27" in HONESTY, "HONESTY.md should state the approximate baseline"
+
+
+def test_honesty_states_the_intrabar_upper_bound():
+    """The largest known limitation must be stated, with its consequence."""
+    flat = _flat(HONESTY)
+    assert "intrabar" in flat
+    # The two must be linked: the limitation and its consequence on the
+    # number. "upper bound" on its own could be about anything.
+    assert "pass rate here is an upper bound" in flat
+    assert "not a central estimate" in flat
+
+
+def test_honesty_does_not_claim_the_stationary_bootstrap_walks_cyclically():
+    """The stationary bootstrap must be described as it now behaves."""
+    # The buggy implementation walked the source cyclically from one
+    # start. If the document describes that, it documents the defect.
+    flat = _flat(HONESTY)
+    assert "each block starts at a uniformly random index" in flat
+    assert "permutation of the whole source array" in flat
+
+
+def test_honesty_credits_deltatrend_trading():
+    """The origin of the surface must be named."""
+    assert "DeltaTrend Trading" in HONESTY
+    assert "deltatrendtrading" in HONESTY
+
+
+def test_honesty_states_the_licence_position_of_the_reference_project():
+    """The reference project has no license; the document must say so."""
+    flat = _flat(HONESTY)
+    assert "carries no license file" in flat
+    assert "dsilva42/prop-risk-geometry" in HONESTY
+
+
+def test_honesty_mentions_purge_and_embargo_defaults():
+    """A walk-forward that is not purged by default must be flagged."""
+    assert "purge_bars" in HONESTY
+    assert "embargo_bars" in HONESTY
+    assert "not" in HONESTY.lower()
+
+
+def test_honesty_states_the_rr_axis_gap_is_large():
+    """The measured/modelled gap on the R:R axis is not a rounding error."""
+    assert "56 percentage points" in HONESTY

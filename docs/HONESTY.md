@@ -21,6 +21,47 @@ decision and a coin toss.
 
 ---
 
+## Rule 0: a pass rate is a comparison, not a score
+
+A challenge is not a coin toss. The profit target sits *above* the
+starting balance and the trailing drawdown sits *below* it, so a random
+walk that happens to run up early can reach the target before it ever
+retraces enough to breach the floor.
+
+For the APEX 50K EOD rules a strategy with **no edge at all** scores
+around **27 percent**. That was verified against an independent
+random-walk implementation written directly from the rules, which gave
+27.5 percent and 25.2 percent on two runs, agreeing with this package's
+own Monte Carlo within half a percentage point.
+
+So a pass rate on its own is a score, and a score reads like a result.
+Every report therefore states the zero-edge baseline next to the number:
+
+```
+strategy pass rate 26.5 percent   zero-edge baseline 26.9 percent
+```
+
+That strategy has demonstrated nothing. A strategy scoring 40 percent
+against a 27 percent baseline has demonstrated something.
+
+The baseline is computed by `zero_edge_baseline`, which runs the same
+challenge rules against a zero-edge trade distribution.
+
+### The empirical number is a different quantity
+
+Real prop firms publish pass rates too, and they are much lower: the
+PropSim-Enterprise dataset reports phase-1 clear rates of roughly
+13 to 14 percent. That is **not** a contradiction of the 27 percent
+geometric baseline, and the two must never be compared directly.
+
+The 27 percent is what this model produces for a zero-edge strategy
+under modelled rules. The 14 percent is what happened to real accounts,
+which include intrabar excursions, news gaps and over-leverage, none of
+which the model simulates. The honest response is to publish the
+baseline so the two are not confused, not to treat the model as broken.
+
+---
+
 ## Rule 1: bootstrap the real trades, never coin-flip them
 
 The textbook approach to Monte Carlo a prop firm challenge assumes
@@ -71,9 +112,29 @@ number is flattering.
 
 A third method is available: `resampling="stationary"`, which is the
 stationary bootstrap of Politis and Romano (1994). It draws contiguous
-blocks whose lengths follow a geometric distribution, so the resampled
-series stays stationary, which a fixed-length moving-block bootstrap
-does not.
+blocks whose lengths follow a geometric distribution, and **each block
+starts at a uniformly random index**, so the resampled series stays
+stationary, which a fixed-length moving-block bootstrap does not.
+
+That last clause is load-bearing, and getting it wrong is invisible to
+the obvious tests. This package once drew one random start and walked
+the source array cyclically from it. The output was still a list of
+floats of the right length, and every existing test passed, but the
+output was a **permutation of the whole source array**. The resampled
+mean was therefore pinned to the source mean exactly, with **zero**
+sampling variability: measured at 0.000000 against 0.063277 for the
+i.i.d. bootstrap.
+
+A bootstrap whose mean never varies cannot estimate the uncertainty of
+that mean, which is the one thing a bootstrap is for. The defect is
+fixed, and the guard is a property test on the *distribution* of the
+resample rather than its shape: block length 1 must reduce to the plain
+bootstrap, and the block bootstrap must be wider than the i.i.d.
+bootstrap on a serially correlated series.
+
+The lesson generalises: **when you change a resampler, test what the
+output's distribution looks like, not just its length.** The old tests
+checked the shape and could never have caught this.
 
 The mean block length is a manual parameter (`mean_block_length`,
 default 5 trades) and it is a real modelling choice. Too short and the
@@ -161,7 +222,7 @@ This package tags every axis as one of:
 | Axis | Provenance | Reason |
 |------|-----------|--------|
 | Risk geometry | measured | The trade distribution is fixed by the backtest and only the sizing changes. Every cell is a genuine simulation. |
-| R:R | measured, only if the backtest is re-run | Changing R:R changes which trades exist. A trade that reached its target at 2R would not have reached it at 1R. Rescaling the winners of an existing trade array is a model. |
+| R:R | measured, only if the backtest is re-run | Changing R:R changes which trades exist. A trade that reached its target at 2R would not have reached it at 1R. Rescaling the winners of an existing trade array is a model. The gap between the two was measured at up to **56 percentage points**, so "modelled" here is not a rounding difference. |
 | Win rate | **always modelled** | You cannot re-backtest a win rate. Forcing a different win rate means fabricating trades. |
 
 ### The win-rate axis
@@ -183,6 +244,27 @@ So the win-rate surface in this package is labelled `modelled` on both
 axes, always, and the report says so in the Honesty section without
 being asked.
 
+### Every surface must use the same resampling as the headline
+
+The surfaces and the headline Monte Carlo once ran with different
+resampling, because the surface builders were not given
+`session_dates` and fell back to i.i.d. while the headline used the
+block bootstrap. The report could then print two different pass rates
+for one strategy, in two sections, without either being wrong on its
+own terms.
+
+Every surface builder therefore takes `session_dates`, and the rule is
+absolute: **a surface that resamples differently from the headline
+prints a second, different pass rate for the same strategy.** Pass it.
+
+### The operating point
+
+The win-rate surface is modelled on both axes, so nothing on it is a
+measurement of your strategy. The one thing that is a fact is where
+your strategy sits on it, and the surface marks it. Pass
+`operating_point` and the marker appears; leave it out and the reader
+is left to guess whether the strategy is even in the picture.
+
 ### Why the risk-geometry axis is the one to lead with
 
 Because it is genuinely measured. The trades, their order and their
@@ -190,6 +272,44 @@ sizes in R are fixed by the backtest. Only the position-sizing rule
 changes from cell to cell. Every cell is a real simulation over real
 trades. When you want to know "does my sizing matter, and how much",
 that is the surface to trust.
+
+---
+
+## Rule 3b: a pass rate is not an edge, and the verdict has to say so
+
+A narrow confidence interval on a pass rate is a precise measurement of
+a possibly-worthless strategy. The two numbers answer different
+questions, and a report that gives only the first one is misleading.
+
+So the edge is tested separately, by `prop_lab.validate.test_edge`: a
+bootstrap confidence interval on the mean R per trade. It is the primary
+test because the R-multiple distribution is skewed and bounded, and a
+t-test assumes it is neither. The t-statistic is a cross-check, not the
+primary.
+
+That test refines the walk-forward verdict. The degradation-only
+verdict answers "did the edge survive out of sample", which on its own
+cannot answer "was there an edge" — and it returned `holds` for a
+strategy whose out-of-sample mean R was indistinguishable from zero.
+That reads as "the edge survived" when there was never an edge to
+survive.
+
+The verdict vocabulary is therefore four values:
+
+| verdict | meaning |
+|---|---|
+| `holds` | The edge survived out of sample **and** is statistically distinguishable from zero. |
+| `degrades` | There is an edge, but it shrank out of sample. |
+| `no_edge` | No edge was detected. The confidence interval on the mean R includes zero. |
+| `fails` | The out-of-sample mean R is zero or negative, or the edge degraded badly. |
+
+`no_edge` is deliberately distinct from `fails`. `fails` says the edge
+degraded; `no_edge` says there was no edge in the first place.
+
+One more distinction that matters in small samples. Below 30 trades the
+edge test is **inconclusive**, not negative: a non-significant result
+there means the sample was too small to conclude either way. The report
+distinguishes the two, and so must you.
 
 ---
 
@@ -208,6 +328,14 @@ Concretely: this package's engine reproduces the reference project's
 win rate against the reference's 41.1 percent, and +0.262R against
 +0.233R. The difference is the pessimistic fill model. It is a small
 gap, and it points in the direction that does not flatter the strategy.
+
+Those numbers come from `scripts/baseline_check.py`, which asserts them
+against the reference with a 2 percentage point tolerance on win rate
+and 0.05R on mean R. The MNQ 5-minute dataset they were measured on is
+**not shipped** in this repository and is not freely downloadable, so
+that script cannot be re-run without your own copy of it. The claim
+above is therefore a recorded measurement, not something a reader can
+reproduce from this repository alone.
 
 Sample size rules that the report enforces:
 
@@ -241,6 +369,21 @@ predict the account.
 This package uses the correct rule by default and reports the
 difference where it matters.
 
+### The window rule is not a detail either
+
+The same trap applies to the train/test boundary. `purge_bars` removes
+the end of each training window, so trades that straddle the boundary
+cannot leak test-period prices into the in-sample statistics.
+`embargo_bars` adds a gap between the two.
+
+**Both default to 0, which means the default walk-forward is not
+purged** — even though it is called a purged walk-forward and
+`walk_forward` has accepted these arguments all along. Set them to
+cover the longest holding period in bars.
+
+A window rule that does not hold does not describe the market. It
+describes the backtest.
+
 ---
 
 ## Rule 6: the warnings are part of the result
@@ -258,6 +401,23 @@ Standing caveats that are always printed:
 - firms change their rules, so the ruleset date matters
 - the bootstrap approximates session boundaries with synthetic days
 - a small trade sample cannot support a confident conclusion
+- **the drawdown is checked on closed trade equity, not intrabar**
+
+That last one is the largest known limitation and it needs spelling
+out. The simulation sees one equity number per trade, so an account
+that dips below the trailing floor mid-trade and recovers into the
+close is scored as surviving. Real firms check the floor continuously
+against equity including unrealised profit, so some of the accounts this
+model counts as passes would have breached in real time.
+
+**The pass rate here is an upper bound, not a central estimate.** It
+says the pass rate cannot be worse than this; it does not say it is
+this good.
+
+Fixing it means feeding the simulation the per-bar equity path rather
+than one number per trade, which is a real piece of work and not a
+fudge factor. Until it is done, quote the pass rate with the caveat
+attached, every time.
 
 ---
 
@@ -326,23 +486,35 @@ money. The following are outside what any of this can tell you:
 
 The honest framing of a pass rate is: "under the assumptions listed
 above, and on the historical sample above, the simulation produced this
-number".
+number, against a zero-edge baseline of this other number".
 
 ---
 
 ## Attribution
 
+**The pass-rate surface that this package exists to extend is DeltaTrend
+Trading's public work** — Thomas Skinner, `@deltatrendtrading` on
+YouTube, TikTok and Instagram. He popularised it on TikTok and YouTube
+using Topstep rules, and he has publicly pushed back on creators who
+copied the surface without understanding what the axes mean.
+
+That pushback is the reason this package labels every axis measured or
+modelled, and the reason the win-rate axis is stated to be parametric by
+construction. The reasoning in this document is an attempt to make the
+copying unnecessary, not a claim of priority over the original idea.
+
 The bootstrap-resampled challenge simulation and the risk-geometry
 framing come from the prop-risk-geometry project, originally
 `github.com/hunter547/prop-risk-geometry` and now
-`github.com/dsilva42/prop-risk-geometry`.
-
-The pass-rate surface visualisation that started the public conversation
-about this geometry is DeltaTrend Trading's work, on TikTok and YouTube,
-using Topstep rules. He has publicly pushed back on creators who copied
-his surface without understanding it. The reasoning in this document is
-an attempt to make the copying unnecessary.
+`github.com/dsilva42/prop-risk-geometry`. **That project carries no
+license file**, so it is cited as the origin of the idea and no code was
+taken from it; this is an independent implementation. A verbatim-overlap
+check against its 113 Python files found a maximum of 0.87 percent
+shingle overlap, which is Python boilerplate.
 
 The purged walk-forward follows Lopez de Prado, "Advances in Financial
 Machine Learning", chapters 7 and 12, and the implementation conventions
 of `github.com/eslazarev/purged-cross-validation`.
+
+The full prior-art review, with every license verified by reading the
+license file on disk, is in `docs/PRIOR-ART.md`.
