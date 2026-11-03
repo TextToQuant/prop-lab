@@ -5,9 +5,14 @@ Upstream GitHub repo: `<owner>/prop-lab`
 
 ## Where things stand
 
-- 143 tests pass (136 + 7 rendering), 4 skipped.
-- Everything is written and working but NOT yet committed or pushed.
-- Older reference checkout left untouched (reference/attic).
+**DONE AND PUSHED.** Commit `1deb68b` on `master`, 33 files, verified via
+the GitHub API. 143 tests pass, 4 skipped.
+
+- Repo: https://github.com/<owner>/prop-lab (private)
+- Baseline check passes (reference rule reproduces 73 trades exactly)
+- Surfaces re-rendered and visually audited, annotation bug fixed
+- Research scratch and temp test files deleted
+- Older reference checkout left untouched (reference/attic)
 
 ## What is built
 
@@ -137,15 +142,19 @@ eslazarev/purged-cross-validation, LuxAlgo/prop-firm-sim.
 
 ## Remaining work
 
-1. Visual audit of the re-rendered surfaces (the annotation fix needs
-   a second `vision_analyze` pass to confirm the stray numbers are gone).
-2. `git add -A && git commit && git push` to `<owner>/prop-lab`.
-3. Cleanup `<home-dir>/.hermes/cache/scratch/prop-research` (4 cloned
-   repos + temp downloads) and `/tmp/pl_test`.
-4. Consider implementing the Politis-White block-length selector.
-5. `docs/HONESTY.md` and `docs/DATA.md` do not yet mention
-   `min_trading_days`, `eval_consistency_ratio`, the stationary
-   bootstrap, or the EdgeVeris golden test. Update them.
+1. Implement the Politis-White automatic block-length selector so
+   `mean_block_length` is not a manual choice.
+2. `docs/DATA.md` does not yet mention the stationary bootstrap. The
+   `docs/HONESTY.md` update already covers it, the golden test,
+   `min_trading_days` and `eval_consistency_ratio`.
+3. Consider more firm presets (MyFundedFutures, Tradeify, Alpha Futures
+   rules were read during research and are not encoded yet).
+4. The `rr_surface` measured mode needs a strategy with an overridable
+   `rr_ratio`; the two shipped examples both have one, but it is worth
+   documenting the requirement more prominently.
+5. `docs/images/` is referenced in `.gitignore` but does not exist yet.
+   If example surface images are wanted, generate them into that folder
+   so they are not gitignored.
 
 ## Local commands
 
