@@ -10,8 +10,14 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# Data and generated artifacts — never commit these
+# Data and generated artifacts — never commit these.
+#
+# The "data/" pattern below would match ANY directory called data at any
+# depth, including the real src/prop_lab/data/ package. The negation
+# after it re-includes that package. This is the standard git idiom for
+# "ignore a directory name, except where it is a source package".
 data/
+!src/prop_lab/data/
 *.csv
 *.parquet
 *.bi5
