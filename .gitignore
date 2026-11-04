@@ -7,6 +7,8 @@ dist/
 .venv/
 venv/
 .pytest_cache/
+.pytest_cache
+pytest-of-*/
 .mypy_cache/
 .ruff_cache/
 
@@ -61,3 +63,27 @@ out/
 htmlcov/
 coverage.xml
 .pytype/
+
+# ----------------------------------------------------------------------
+# Local work-session artifacts — never push these.
+#
+# These describe the machine and the session, not the package. They are
+# deliberately ignored rather than deleted: the orchestration log is the
+# running record of what was done and why, and it is useful locally.
+# ----------------------------------------------------------------------
+ORCHESTRATION.md
+ORCHESTRATION*.md
+TIMELINE*.md
+NOTES*.md
+WORKLOG*.md
+
+# Local run output that escapes the reports/ and data/ rules.
+*.log
+logs/
+tmp/
+scratch/
+
+# Notebook and editor working state
+.ipynb_checkpoints/
+.mplconfig/
+.matplotlib/

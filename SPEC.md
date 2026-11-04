@@ -390,9 +390,9 @@ def monte_carlo_challenge(pnl_r_array, rules, *, risk_geometry="frac_2pct",
 #   trades_per_day, max_days, resampling, session_dates, compare_iid,
 #   mean_block_length
 
-def zero_edge_baseline(rules, *, n_trades=2000, risk_geometry="frac_2pct",
+def zero_edge_baseline(rules, *, n_trades=2000, rr=1.0, risk_geometry="frac_2pct",
                        n_attempts=2000, seed=42) -> float:
-    # exact: rules, n_trades, risk_geometry, n_attempts, seed
+    # exact: rules, n_trades, rr, risk_geometry, n_attempts, seed
     """The pass rate a strategy with NO edge scores under these rules.
 
     A challenge is not a coin toss. The profit target sits above the
@@ -401,6 +401,20 @@ def zero_edge_baseline(rules, *, n_trades=2000, risk_geometry="frac_2pct",
     breaches the floor. For the APEX 50K EOD rules this is roughly 27
     percent. Every reported pass rate must be shown against it, because
     a pass rate on its own is a score and not a comparison.
+
+    ``rr`` is the bracket the baseline is built for, because the bracket
+    sets the zero-edge hit rate: P(target first) = 1 / (1 + rr), so a 1:1
+    bracket wins 50 percent and a 1:2 wins 33.3 percent at zero edge.
+    Comparing a 2R strategy against a 1:1 baseline compares it with a
+    different game. The default of 1.0 is a 1:1 bracket.
+
+    The synthetic trade array assumes every trade resolves at its stop or
+    its target. A real run force-closes at the session end, so undecided
+    trades leave at the close at an arbitrary R, and a bracket's hit rate
+    depends on the time it is given. This baseline therefore describes a
+    challenge with no time limit; modelling time exits needs a
+    volatility assumption, which is a property of the market and not of
+    the rules.
     """
 
 @dataclass

@@ -108,7 +108,7 @@ SPEC_SIGNATURE_COMMENTS = {
     "prop_lab.validate.walk_forward": "strategy_factory, df, n_splits, train_frac, purge_bars, embargo_bars, direction, risk_points",
     "prop_lab.validate.test_edge": "pnl_r_array, n_attempts, seed, confidence",
     "prop_lab.firm.monte_carlo_challenge": "pnl_r_array, rules, risk_geometry, n_attempts, seed, atr, max_trades, trades_per_day, max_days, resampling, session_dates, compare_iid, mean_block_length",
-    "prop_lab.firm.monte_carlo.zero_edge_baseline": "rules, n_trades, risk_geometry, n_attempts, seed",
+    "prop_lab.firm.monte_carlo.zero_edge_baseline": "rules, n_trades, rr, risk_geometry, n_attempts, seed",
     "prop_lab.surface.risk_geometry_surface": "pnl_r_array, rules, risk_geometries, n_attempts, seed, session_dates",
     "prop_lab.surface.rr_surface": "pnl_r_array, rules, rr_values, risk_geometries, n_attempts, seed, measured, strategy_factory, df, session_dates",
     "prop_lab.surface.winrate_surface": "pnl_r_array, rules, win_rates, rr_values, n_attempts, seed, session_dates, operating_point, operating_point_label",

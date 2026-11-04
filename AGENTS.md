@@ -240,6 +240,31 @@ source column: `binance` gets `0`, everything else gets `18`.
 
 Run these in order. Do not skip to the Monte Carlo.
 
+### The stop rule
+
+**If the walk-forward verdict is `fails` or `no_edge`, that is the answer.
+Report it and stop.**
+
+The temptation at that point is to start "fixing" the strategy: nudging a
+parameter, sweeping for a cell that passes, trying another firm's ruleset,
+dropping the folds that look bad, or trimming the sample until the number
+improves. All of that is overfitting the test set. It produces a number that
+describes the search, not the strategy, and the person reading it will trade
+on it.
+
+- **Forbidden after a negative verdict:** tuning parameters to escape it,
+  sweeping to find a passing cell, switching ruleset until one passes,
+  dropping folds, trimming the sample, or re-running with a different seed
+  until the interval clears zero.
+- **Allowed:** producing the Monte Carlo and the surfaces for completeness,
+  labelled as descriptive context. Never present them as the result of the
+  strategy.
+- **If you want to keep going**, that is a new hypothesis, not a
+  continuation. Declare it, and test it on data you did not use to choose it.
+
+Saying "this idea has no edge" in one paragraph is a finished, useful
+deliverable. It is not a failure to produce.
+
 ### Step 1: Load and check the data
 
 ```python
@@ -475,8 +500,19 @@ Notes on the CLI:
   neither.
 - `--purge-bars` and `--embargo-bars` default to 0, which means the
   walk-forward is **not** purged. Set them.
-- `report` writes `report.md` **and the six surface figures** into the
+- `report` writes `report.md` **and the surface figures** into the
   output directory. `surface` writes only the figures.
+- **A 3D surface is only written when the grid varies along both axes.** A
+  grid with one value on an axis is a list of numbers, and its 3D view is a
+  vertical curtain, not a surface; it gets a heatmap and nothing else.
+  `surface` and `report` default to **all three firm presets**, so the
+  ruleset axis is a real axis. Pass one firm (`--firm apex-50k-eod`) to
+  model that account only — the risk-geometry figure then becomes a
+  heatmap, because its ruleset axis is constant. The other surfaces and
+  the headline Monte Carlo always use the first firm named.
+- Only two surfaces get a 3D view: the ruleset x risk-geometry cross, and
+  win rate x R:R. The R:R x risk-geometry surface is a heatmap, because
+  its cells are read one at a time.
 - `inspect` shows the strategy's parameters and the assumptions it
   carries. Use it before quoting a strategy's configuration.
 - `trades` exports the trade list so the backtest can be audited by
@@ -630,6 +666,21 @@ result.
     `path:Class`. Split it on the **last** colon. Splitting on the first
     one turns the drive letter `C:` into a module name and the load
     fails with `No module named 'C'`.
+
+14. **`on_bar` is only called while flat.** The engine calls
+    `strategy.on_bar` only when there is no open position
+    (`core.py:301`), so bars that pass during a trade never reach the
+    strategy. A stateless rule is fine. **An indicator folded bar by bar
+    inside `on_bar` is not**: `self._closes.append(...)` accumulates over
+    a gapped stream, and every derived value — RSI, ATR, EMA — is then
+    wrong. The backtest still runs and still prints trades, which is what
+    makes this dangerous. Two bundled strategies carry the latent problem
+    (`examples/strategies/doji_ema_trend.py`, `strategies/ema_trend_pullback.py`);
+    in an end-to-end test a stateful implementation saw 36,818 of 49,628
+    bars. Precompute the indicator over the whole series and look it up by
+    `bar_index`, or keep the rule stateless. If you are auditing a
+    strategy's stops, check that each one matches the indicator of a real
+    bar — if none do, this is why.
 
 ---
 

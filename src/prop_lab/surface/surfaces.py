@@ -62,13 +62,14 @@ and now ``dsilva42/prop-risk-geometry``.
 """
 from __future__ import annotations
 
-import inspect
 import math
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
+
+from prop_lab.surface.geometry import assert_mesh_is_drawable, build_mesh_grid
 
 __all__ = [
     "AXIS_MEASURED",
@@ -82,6 +83,7 @@ __all__ = [
     "DEFAULT_RISK_GEOMETRIES",
     "DEFAULT_RR_VALUES",
     "DEFAULT_WIN_RATES",
+    "assert_rendered_surface_has_geometry",
 ]
 
 #: Provenance tag for an axis that was computed from real data.
@@ -261,6 +263,18 @@ class Surface:
         the surface so that the figure cannot be screenshotted out of
         context and mislead.
 
+        A surface with a single value on one of its axes is drawn as a
+        flat ribbon along that axis. ``matplotlib``'s ``plot_surface``
+        cannot build a quad mesh along a dimension of length 1, and it
+        does not raise when it fails: it returns an artist that renders
+        nothing, so the figure comes back with a correct title, correct
+        axis limits and a correct colour bar and an entirely empty
+        plotting area. The risk-geometry surface has exactly this shape
+        in the ordinary single-ruleset case, which is the surface the
+        report leads with, so the degenerate case is handled by
+        :mod:`prop_lab.surface.geometry`, which owns that rule for the
+        whole package.
+
         Returns:
             A ``matplotlib.figure.Figure``.
         """
@@ -273,34 +287,55 @@ class Surface:
 
         xs = [str(v) for v in self.spec.x_values]
         ys = [str(v) for v in self.spec.y_values]
-        xi = np.arange(len(xs))
-        yi = np.arange(len(ys))
-        xx, yy = np.meshgrid(xi, yi, indexing="ij")
+
+        # The mesh geometry is decided in one place for the whole
+        # package, so a new surface builder cannot reintroduce the
+        # empty-figure bug by forgetting a special case.
+        mesh = build_mesh_grid(self.z)
 
         surf = ax.plot_surface(
-            xx,
-            yy,
-            self.z,
+            mesh.xx,
+            mesh.yy,
+            mesh.z,
             cmap="plasma",
             edgecolor="none",
             antialiased=True,
         )
         fig.colorbar(surf, ax=ax, shrink=0.6, label=self.spec.z_name)
 
-        ax.set_xticks(xi)
+        # The tick positions must match the ORIGINAL axis values, not the
+        # widened ones, or a single-value axis would end up labelled with
+        # a phantom tick.
+        ax.set_xticks(mesh.x_positions)
         ax.set_xticklabels(xs, rotation=30, ha="right", fontsize=8)
-        ax.set_yticks(yi)
+        ax.set_yticks(mesh.y_positions)
         ax.set_yticklabels(ys, fontsize=8)
-        ax.set_xlabel(self.spec.x_name)
-        ax.set_ylabel(self.spec.y_name)
-        ax.set_zlabel(self.spec.z_name)
+
+        # No floating axis labels on the 3D view.
+        #
+        # In mplot3d the axis label is placed at the middle of the axis
+        # line, which is exactly where the tick labels are. With long
+        # category names such as 'dd_frac_40pct' the label lands on top
+        # of them, and pushing it out with labelpad walks it off the
+        # canvas instead of clearing them. Both failure modes were
+        # reproduced across several azimuths, font sizes and pad values,
+        # so this is a property of the projection and not a setting to
+        # tune.
+        #
+        # The axis names are not lost: the title states them as
+        # "{x_name} x {y_name}", and the colour bar is labelled with the
+        # z name. The heatmap keeps its axis labels, because a 2D axes
+        # has room for them.
         if self.spec.z_name == "pass_rate":
             # A pass rate is a probability, so the axis reads in percent.
             ax.zaxis.set_major_formatter(
                 matplotlib.ticker.FuncFormatter(lambda v, _: f"{v * 100:.0f}%")
             )
         ax.set_title(self._title_text())
-        fig.tight_layout()
+        # Deliberately no tight_layout: it emits "Tight layout not
+        # applied" on every 3D surface (the colour bar plus long tick
+        # labels cannot be accommodated) and then does nothing. The
+        # margins are handled by bbox_inches="tight" at save time.
         return fig
 
     def to_heatmap(self):
@@ -636,56 +671,216 @@ def _rules_label(rules: Any) -> str:
     return type(rules).__name__
 
 
+def _count_drawn_artists(ax) -> int:
+    """Count the drawable artists attached to one axes.
+
+    The two chart types this package emits put their geometry in
+    different places:
+
+    * ``plot_surface`` puts polygons in ``ax.collections``;
+    * ``imshow`` puts a raster in ``ax.images``.
+
+    Checking only one of them reports a perfectly good figure as empty.
+
+    Args:
+        ax: the axes to inspect.
+
+    Returns:
+        The number of drawn artists.
+    """
+    total = 0
+
+    for collection in getattr(ax, "collections", []):
+        try:
+            total += len(collection.get_paths())
+        except Exception:  # pragma: no cover - exotic artist
+            continue
+
+    for image in getattr(ax, "images", []):
+        try:
+            if image.get_array() is not None:
+                total += 1
+        except Exception:  # pragma: no cover - exotic artist
+            continue
+
+    return total
+
+
+def assert_rendered_surface_has_geometry(fig, *, context: str = "surface") -> int:
+    """Check that a rendered figure actually contains geometry.
+
+    This is the general safety net for the class of bug where a figure
+    comes back looking correct but showing nothing. It does not care WHY
+    the figure is empty: a mesh that could not be built, a renderer that
+    changed its behaviour, a chart type whose artists live somewhere
+    this function does not know about. It checks the thing that matters:
+    whether anything was drawn.
+
+    Only the FIRST axes is inspected. A figure here is one data axes plus
+    a colour bar, and the colour bar is itself built from collections
+    with paths. Counting every axes in the figure would let a blank plot
+    pass on the strength of its colour bar alone, which is precisely the
+    kind of false pass this guard exists to prevent.
+
+    Args:
+        fig: the matplotlib figure to check.
+        context: a short description used in the error message.
+
+    Returns:
+        The number of drawn artists.
+
+    Raises:
+        RuntimeError: if the figure contains no geometry. This is a
+            programming error rather than a data condition, so it is a
+            hard failure: shipping an empty figure as a report artefact
+            is worse than crashing.
+    """
+    axes = getattr(fig, "axes", None)
+    if not axes:
+        raise RuntimeError(f"{context}: the figure has no axes to draw on")
+
+    # mplot3d builds its polygons at projection time, not when
+    # plot_surface is called. Before a draw, a perfectly good 3D surface
+    # reports zero artists, so counting first would fail every valid
+    # figure. Drawing first is what makes the count mean "was anything
+    # actually drawn".
+    fig.canvas.draw()
+
+    total = _count_drawn_artists(axes[0])
+
+    if total == 0:
+        raise RuntimeError(
+            f"{context}: the rendered figure contains no geometry. It "
+            "would have been written to disk with a correct title, a "
+            "correct colour bar and correct axis limits, and would have "
+            "looked plausible while saying nothing. matplotlib's "
+            "plot_surface builds no quads along an axis of length 1 and "
+            "does not raise when it fails, so check the grid shape."
+        )
+    return total
+
+
+def _try_construct(strategy_factory: Any, strategy_type: Any, args: dict) -> Any:
+    """Try to build a strategy from ``args``, returning None on failure.
+
+    The factory is tried first because it is the caller's own callable
+    and may close over configuration. The concrete class is tried second
+    because a factory written as ``lambda: Strategy()`` accepts no
+    arguments at all.
+
+    Args:
+        strategy_factory: the caller's factory callable.
+        strategy_type: the type of the instance the factory returned.
+        args: keyword arguments to build with.
+
+    Returns:
+        A new strategy instance, or None if neither route accepted the
+        arguments.
+    """
+    for ctor in (strategy_factory, strategy_type):
+        try:
+            return ctor(**args)
+        except TypeError:
+            continue
+        except Exception:  # pragma: no cover - a genuine constructor error
+            continue
+    return None
+
+
+def _assert_effective_rr(strategy: Any, rr: float) -> None:
+    """Raise if the strategy's effective reward-to-risk is not ``rr``.
+
+    This is the post-condition that makes a silently-ignored override
+    impossible. Without it, a strategy can accept an ``rr_ratio``
+    setting into a field nothing reads, the backtest runs unchanged at
+    every R:R, and the R:R surface becomes a horizontal plane whose
+    title still claims the axis is measured.
+
+    Args:
+        strategy: the strategy that was just built or mutated.
+        rr: the reward-to-risk that was asked for.
+
+    Raises:
+        ValueError: if the strategy exposes a readable ``rr_ratio`` and
+            it does not equal ``rr``.
+    """
+    value = getattr(strategy, "rr_ratio", None)
+    if value is None:
+        return
+    try:
+        current = float(value)
+        wanted = float(rr)
+    except (TypeError, ValueError):
+        return
+    if abs(current - wanted) > 1e-9:
+        raise ValueError(
+            f"the strategy's effective reward-to-risk is {current:g} after "
+            f"being built for {wanted:g}. The override did not take effect, "
+            "so a measured R:R surface would have been a flat plane labelled "
+            "as measured. Expose 'rr_ratio' as a readable attribute or a "
+            "constructor argument, or call rr_surface(..., measured=False)."
+        )
+
+
 def _build_strategy_with_rr(strategy_factory: Any, rr: float) -> Any:
-    """Build a strategy instance whose R:R equals ``rr``.
+    """Build a strategy instance whose effective R:R equals ``rr``.
 
     Three strategies are attempted, in this order:
 
-    1. the instance exposes a parameter named ``rr_ratio`` (in its
-       ``params`` mapping or in its constructor signature);
-    2. the instance has an ``rr_ratio`` attribute, which is set;
-    3. the factory accepts an ``rr_ratio`` keyword argument.
+    1. rebuild through a constructor using the parameters the instance
+       recorded, so any state derived in ``__init__`` (bar counts, stop
+       sizing) is re-initialised rather than left stale;
+    2. set the ``rr_ratio`` attribute the strategy actually reads, and
+       keep the ``params`` mapping in step with it;
+    3. ask the factory for an instance with ``rr_ratio``.
+
+    Ordering matters, and getting it wrong was a real defect. An earlier
+    version wrote to ``strategy.params['rr_ratio']`` and returned
+    immediately. Every real strategy reads ``self.rr_ratio``, which is a
+    separate attribute set in ``__init__``, so the backtest ran with the
+    original R:R for every value asked for. The result was an R:R
+    surface that was a horizontal plane while its title said MEASURED.
 
     Args:
         strategy_factory: callable returning a fresh strategy instance.
         rr: the target reward-to-risk ratio.
 
     Returns:
-        A strategy instance configured for ``rr``.
+        A strategy instance whose effective R:R is ``rr``.
 
     Raises:
-        ValueError: if none of the three strategies works. The message
-            explains that ``measured=True`` needs an rr-overridable
-            strategy.
+        ValueError: if none of the three routes works, or if the chosen
+            route leaves the effective R:R different from ``rr``.
     """
     strategy = strategy_factory()
-
     params = getattr(strategy, "params", None)
-    if isinstance(params, dict) and "rr_ratio" in params:
-        params["rr_ratio"] = rr
-        return strategy
+    recorded = dict(params) if isinstance(params, dict) else {}
 
+    # 1. Rebuild so derived state is recomputed, not left from a previous
+    #    reward-to-risk.
+    if "rr_ratio" in recorded:
+        rebuilt = _try_construct(
+            strategy_factory, type(strategy), {**recorded, "rr_ratio": rr}
+        )
+        if rebuilt is not None:
+            _assert_effective_rr(rebuilt, rr)
+            return rebuilt
+
+    # 2. Set the attribute the strategy reads, and mirror it into params
+    #    so the two stores cannot disagree.
     if hasattr(strategy, "rr_ratio"):
         try:
             setattr(strategy, "rr_ratio", rr)
+            if isinstance(getattr(strategy, "params", None), dict):
+                strategy.params["rr_ratio"] = rr
+            _assert_effective_rr(strategy, rr)
             return strategy
-        except Exception:  # pragma: no cover - read-only attribute
+        except (AttributeError, TypeError):  # pragma: no cover - read-only
             pass
 
+    # 3. Last resort: ask the factory for a configured instance.
     try:
-        sig = inspect.signature(type(strategy).__init__)
-    except (TypeError, ValueError):  # pragma: no cover - exotic objects
-        sig = None
-    if sig is not None and "rr_ratio" in sig.parameters:
-        new_params = dict(params) if isinstance(params, dict) else {}
-        new_params["rr_ratio"] = rr
-        try:
-            return type(strategy)(**new_params)
-        except Exception:  # pragma: no cover - fall through to the factory
-            pass
-
-    try:
-        return strategy_factory(rr_ratio=rr)
+        built = strategy_factory(rr_ratio=rr)
     except TypeError as exc:
         raise ValueError(
             "measured=True needs a strategy whose reward-to-risk can be "
@@ -695,6 +890,8 @@ def _build_strategy_with_rr(strategy_factory: Any, rr: float) -> Any:
             "call rr_surface(..., measured=False) to use the modelled "
             f"approximation. Original error: {exc}"
         ) from exc
+    _assert_effective_rr(built, rr)
+    return built
 
 
 def _scale_winners_to_rr(pnl_r_array: np.ndarray, rr: float) -> np.ndarray:
@@ -805,6 +1002,10 @@ def risk_geometry_surface(
         "z": "pass rate",
         "name": "risk_geometry x ruleset",
     }
+    # The grid is checked here, where it is built, so a shape that
+    # cannot be drawn is rejected at the source instead of producing an
+    # empty PNG later on.
+    assert_mesh_is_drawable(z, context="risk_geometry_surface")
     return Surface(spec=spec, z=z, axis_labels=axis_labels, ci_low=ci_low, ci_high=ci_high)
 
 
@@ -945,6 +1146,7 @@ def rr_surface(
         "z": "pass rate",
         "name": "rr_ratio x risk_geometry",
     }
+    assert_mesh_is_drawable(z, context="rr_surface")
     return Surface(spec=spec, z=z, axis_labels=axis_labels, ci_low=ci_low, ci_high=ci_high)
 
 
@@ -1057,6 +1259,7 @@ def winrate_surface(
         "z": "pass rate",
         "name": "win_rate x rr_ratio",
     }
+    assert_mesh_is_drawable(z, context="winrate_surface")
     if operating_point is not None:
         op_win, op_rr = float(operating_point[0]), float(operating_point[1])
         spec.operating_point = (op_win, op_rr)

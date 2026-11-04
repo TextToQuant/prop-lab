@@ -114,8 +114,15 @@ def _load_bars(
                 source = ""
         # A 24/7 market has no session open in the futures sense.
         session_open_hour = 0 if source == "binance" else 18
+        origin = f"inferred from source={source or 'unknown'}"
+    else:
+        origin = "--session-open-hour"
 
     bars["session_date"] = assign_session_dates(bars, session_open_hour=session_open_hour)
+    # Say which rule was applied. A silently mismatched session boundary
+    # changes where the daily loss limit resets and where positions are
+    # force-closed, and it is invisible in the output otherwise.
+    print(f"session rule: {session_open_hour} ({origin})")
     return bars
 
 
@@ -141,6 +148,34 @@ def _print_trade_stats(stats: dict) -> None:
 # ----------------------------------------------------------------------
 # Commands
 # ----------------------------------------------------------------------
+def _parse_firms(spec: str):
+    """Parse a comma-separated firm spec into ``(primary, all)``.
+
+    The risk-geometry surface crosses sizing rules against firm
+    rulesets, and that cross is this package's actual contribution: a
+    surface with one ruleset has a constant axis and is a list of
+    numbers, not a surface. The other surfaces and the headline Monte
+    Carlo are about one account, so they use the first preset named.
+
+    Args:
+        spec: one preset name, or several separated by commas.
+
+    Returns:
+        A ``(primary, presets)`` pair, where ``presets`` is the full
+        list in the order given.
+
+    Raises:
+        SystemExit: if no preset name is supplied.
+    """
+    from prop_lab.firm import get_preset
+
+    names = [n.strip() for n in str(spec).split(",") if n.strip()]
+    if not names:
+        raise SystemExit("--firm needs at least one preset name")
+    presets = [get_preset(name) for name in names]
+    return presets[0], presets
+
+
 def _build_surfaces(
     *,
     strategy_cls,
@@ -152,6 +187,7 @@ def _build_surfaces(
     n_attempts: int,
     seed: int,
     strategy_rr_overridable: bool = True,
+    rulesets=None,
 ):
     """Build the three surfaces for a run, consistently.
 
@@ -179,6 +215,10 @@ def _build_surfaces(
         seed: RNG seed.
         strategy_rr_overridable: False when the caller already knows the
             strategy cannot take an ``rr_ratio``.
+        rulesets: the rulesets to cross against risk geometry. Defaults
+            to ``[rules]``, which produces a single-row grid and
+            therefore a degenerate surface; pass several to get the
+            cross that this package exists to produce.
 
     Returns:
         A list of three :class:`~prop_lab.surface.surfaces.Surface`
@@ -196,8 +236,21 @@ def _build_surfaces(
     def factory():
         return strategy_cls(**kwargs)
 
+    geometry_rulesets = list(rulesets) if rulesets else [rules]
+    if len(geometry_rulesets) == 1:
+        notes.append(
+            "risk-geometry surface: only one ruleset was crossed, so the "
+            "'ruleset' axis is constant and the figure cannot show a trend "
+            "along it. Pass several rulesets (--firm a,b,c) to get the "
+            "ruleset x risk-geometry cross this package is built around."
+        )
+
     s1 = risk_geometry_surface(
-        pnl, rules, n_attempts=n_attempts, seed=seed, session_dates=sessions
+        pnl,
+        geometry_rulesets,
+        n_attempts=n_attempts,
+        seed=seed,
+        session_dates=sessions,
     )
 
     # -- R:R surface: measured when the strategy allows it ---------------
@@ -294,6 +347,30 @@ def _strategy_rr_ratio(strategy_cls, kwargs: dict, pnl) -> float:
             if mean_loss > 0:
                 return mean_win / mean_loss
     return 0.0
+
+
+def _baseline_rr(strategy_cls, kwargs: dict, pnl) -> float:
+    """The R:R bracket the zero-edge baseline should be built for.
+
+    The baseline's hit rate is a property of the bracket: 1:1 wins 50
+    percent with no edge, 1:2 wins 33 percent. Comparing a 2R strategy
+    against a 1:1 baseline compares it with a different game, so the
+    baseline is built for the strategy's own bracket.
+
+    Args:
+        strategy_cls: the strategy class.
+        kwargs: constructor kwargs in force.
+        pnl: the real per-trade R-multiples, used as a fallback.
+
+    Returns:
+        The R:R to build the baseline for, falling back to 1.0 when the
+        strategy's bracket cannot be determined.
+    """
+    try:
+        rr = float(_strategy_rr_ratio(strategy_cls, kwargs, pnl))
+    except (TypeError, ValueError):
+        return 1.0
+    return rr if rr > 0 else 1.0
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -576,7 +653,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     from prop_lab.core import run_backtest, summarize_trades
 
     strategy_cls = _load_strategy(args.strategy)
-    bars = _load_bars(args.data, timeframe=args.timeframe)
+    bars = _load_bars(
+        args.data,
+        timeframe=args.timeframe,
+        session_open_hour=getattr(args, "session_open_hour", None),
+    )
     strategy = strategy_cls(**_strategy_kwargs(strategy_cls, args))
 
     trades = run_backtest(strategy, bars, direction=args.direction)
@@ -596,7 +677,11 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
     from prop_lab.validate import walk_forward, walk_forward_table
 
     strategy_cls = _load_strategy(args.strategy)
-    bars = _load_bars(args.data, timeframe=args.timeframe)
+    bars = _load_bars(
+        args.data,
+        timeframe=args.timeframe,
+        session_open_hour=getattr(args, "session_open_hour", None),
+    )
 
     def factory():
         return strategy_cls(**_strategy_kwargs(strategy_cls, args))
@@ -639,8 +724,13 @@ def cmd_montecarlo(args: argparse.Namespace) -> int:
     from prop_lab.firm import get_preset, monte_carlo_challenge
 
     strategy_cls = _load_strategy(args.strategy)
-    bars = _load_bars(args.data, timeframe=args.timeframe)
-    strategy = strategy_cls(**_strategy_kwargs(strategy_cls, args))
+    bars = _load_bars(
+        args.data,
+        timeframe=args.timeframe,
+        session_open_hour=getattr(args, "session_open_hour", None),
+    )
+    kwargs = _strategy_kwargs(strategy_cls, args)
+    strategy = strategy_cls(**kwargs)
 
     trades = run_backtest(strategy, bars, direction=args.direction)
     if not trades:
@@ -673,6 +763,7 @@ def cmd_montecarlo(args: argparse.Namespace) -> int:
     baseline = zero_edge_baseline(
         rules,
         n_trades=min(2000, len(pnl)) if len(pnl) else 2000,
+        rr=_baseline_rr(strategy_cls, kwargs, pnl),
         risk_geometry=args.geometry,
         n_attempts=max(1000, args.attempts // 4),
         seed=args.seed,
@@ -716,7 +807,7 @@ def cmd_surface(args: argparse.Namespace) -> int:
 
     pnl = np.array([t.pnl_r for t in trades])
     sessions = [t.session_date for t in trades]
-    rules = get_preset(args.firm)
+    rules, rulesets = _parse_firms(args.firm)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -730,6 +821,7 @@ def cmd_surface(args: argparse.Namespace) -> int:
         rules=rules,
         n_attempts=args.attempts,
         seed=args.seed,
+        rulesets=rulesets,
     )
 
     print(surface_table(surfaces))
@@ -738,19 +830,74 @@ def cmd_surface(args: argparse.Namespace) -> int:
         print(f"note: {note}")
     print()
 
-    for surface in surfaces:
-        stem = surface.spec.x_name
-        fig = surface.to_3d()
-        path3d = out_dir / f"surface_{stem}_3d.png"
-        fig.savefig(path3d, dpi=120, bbox_inches="tight")
-        print(f"wrote {path3d}")
-
-        fig2 = surface.to_heatmap()
-        path2d = out_dir / f"surface_{stem}_heatmap.png"
-        fig2.savefig(path2d, dpi=120, bbox_inches="tight")
-        print(f"wrote {path2d}")
+    _write_surface_figures(surfaces, out_dir)
 
     return 0
+
+
+def _write_surface_figures(surfaces, out_dir: Path) -> None:
+    """Write the figures for each surface.
+
+    Two rules decide what is drawn:
+
+    1. **Only the two surfaces worth a 3D view get one.** Those are the
+       ruleset x risk-geometry cross (pass rate over sizing rule and
+       firm) and win rate x R:R. The R:R x risk-geometry surface is
+       drawn as a heatmap only: its cells are read individually, and a
+       3D sheet over a categorical axis adds depth ambiguity without
+       adding information.
+    2. **A 3D view needs two varying axes.** A grid with a single value
+       on one axis is a list of numbers, and its 3D view is a vertical
+       curtain with a constant tick. Such a grid gets its heatmap and
+       nothing else, and the omission is printed rather than left
+       silent.
+
+    Every figure that IS written is checked for actual geometry first. A
+    figure that renders empty still has a correct title, a correct
+    colour bar and correct axis limits, so it looks plausible in a
+    thumbnail while carrying no information.
+
+    Args:
+        surfaces: the surfaces to render.
+        out_dir: the directory to write the PNGs into.
+
+    Raises:
+        RuntimeError: if a written figure rendered no geometry.
+    """
+    import matplotlib.pyplot as plt
+
+    from prop_lab.surface import assert_rendered_surface_has_geometry
+
+    #: The only surfaces that get a 3D view.
+    three_d_surfaces = {"risk_geometry", "win_rate"}
+
+    for surface in surfaces:
+        stem = surface.spec.x_name
+        label = f"{surface.spec.x_name} x {surface.spec.y_name}"
+        n_x, n_y = surface.z.shape
+
+        if stem not in three_d_surfaces:
+            print(f"no 3D figure for {label}: this surface is read cell by cell")
+        elif n_x > 1 and n_y > 1:
+            fig = surface.to_3d()
+            assert_rendered_surface_has_geometry(fig, context=label)
+            path = out_dir / f"surface_{stem}_3d.png"
+            fig.savefig(path, dpi=120, bbox_inches="tight")
+            plt.close(fig)
+            print(f"wrote {path}")
+        else:
+            print(
+                f"no 3D figure for {label}: the grid is {n_x}x{n_y}, so one "
+                f"axis is constant and the plot would be a curtain, not a "
+                f"surface. The heatmap below shows the same numbers."
+            )
+
+        fig2 = surface.to_heatmap()
+        assert_rendered_surface_has_geometry(fig2, context=f"{label} heatmap")
+        path2d = out_dir / f"surface_{stem}_heatmap.png"
+        fig2.savefig(path2d, dpi=120, bbox_inches="tight")
+        plt.close(fig2)
+        print(f"wrote {path2d}")
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -781,7 +928,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     pnl = np.array([t.pnl_r for t in trades])
     sessions = [t.session_date for t in trades]
-    rules = get_preset(args.firm)
+    rules, rulesets = _parse_firms(args.firm)
 
     wf = walk_forward(
         factory,
@@ -803,6 +950,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     baseline = zero_edge_baseline(
         rules,
         n_trades=min(2000, len(pnl)) if len(pnl) else 2000,
+        rr=_baseline_rr(strategy_cls, kwargs, pnl),
         risk_geometry=args.geometry,
         n_attempts=max(1000, args.attempts // 4),
         seed=args.seed,
@@ -817,6 +965,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         rules=rules,
         n_attempts=args.attempts,
         seed=args.seed,
+        rulesets=rulesets,
     )
 
     strategy_label = strategy_cls.name
@@ -845,17 +994,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     # The report is documented as "everything, plus the labelled
     # surfaces", so it has to write the surface figures too. Otherwise a
     # reader gets a report that describes six plots and ships none.
-    for surface in surfaces:
-        stem = surface.spec.x_name
-        fig = surface.to_3d()
-        path3d = out_dir / f"surface_{stem}_3d.png"
-        fig.savefig(path3d, dpi=120, bbox_inches="tight")
-        print(f"wrote {path3d}")
-
-        fig2 = surface.to_heatmap()
-        path2d = out_dir / f"surface_{stem}_heatmap.png"
-        fig2.savefig(path2d, dpi=120, bbox_inches="tight")
-        print(f"wrote {path2d}")
+    _write_surface_figures(surfaces, out_dir)
 
     print()
     print(markdown)
@@ -977,13 +1116,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_mc.set_defaults(func=cmd_montecarlo)
 
     p_sf = add_common(sub.add_parser("surface", help="build pass-rate surfaces"))
-    p_sf.add_argument("--firm", default="apex-50k-eod")
+    p_sf.add_argument(
+        "--firm",
+        default="apex-50k-eod,apex-50k-intraday,topstep-50k",
+        help=(
+            "firm preset, or several separated by commas. The risk-geometry "
+            "surface crosses rulesets, so it needs at least two; the default "
+            "is all three presets. The other surfaces and the headline Monte "
+            "Carlo use the first one."
+        ),
+    )
     p_sf.add_argument("--attempts", type=int, default=2_000)
     p_sf.add_argument("--out", default="reports")
     p_sf.set_defaults(func=cmd_surface)
 
     p_rp = add_common(sub.add_parser("report", help="run everything and write a report"))
-    p_rp.add_argument("--firm", default="apex-50k-eod")
+    p_rp.add_argument(
+        "--firm",
+        default="apex-50k-eod,apex-50k-intraday,topstep-50k",
+        help=(
+            "firm preset, or several separated by commas. The risk-geometry "
+            "surface crosses rulesets, so it needs at least two; the default "
+            "is all three presets. The other surfaces and the headline Monte "
+            "Carlo use the first one."
+        ),
+    )
     p_rp.add_argument("--geometry", default="frac_2pct")
     p_rp.add_argument("--attempts", type=int, default=10_000)
     p_rp.add_argument("--splits", type=int, default=5)

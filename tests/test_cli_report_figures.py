@@ -1,8 +1,13 @@
 """The report command must write the figures it documents.
 
 The README says `proplab report` produces "everything, plus the labelled
-surfaces". If it writes only the Markdown, the reader is told about six
-plots and receives none.
+surfaces". If it writes only the Markdown, the reader is told about plots
+and receives none.
+
+A 3D figure is written only for a grid that varies along both axes. A
+grid with a constant axis is a list of numbers, and the 3D view of it is
+a vertical curtain: it is not a surface and it is not shipped. That grid
+still gets its heatmap, which shows the same values readably.
 """
 
 from __future__ import annotations
@@ -49,11 +54,10 @@ def test_absolute_strategy_path_loads():
     assert _load_strategy(spec).__name__ == "TrendContinuation"
 
 
-def test_report_writes_surface_figures(tmp_path):
-    """`proplab report` writes a PNG for every surface it describes."""
+def _run_report(tmp_path, firm: str):
+    """Run `proplab report` on synthetic bars and return the output dir."""
     csv = tmp_path / "bars.csv"
     _write_bars(csv)
-
     out = tmp_path / "reports"
     code = main(
         [
@@ -63,7 +67,7 @@ def test_report_writes_surface_figures(tmp_path):
             "--data",
             str(csv),
             "--firm",
-            "apex-50k-eod",
+            firm,
             "--attempts",
             "60",
             "--out",
@@ -71,12 +75,50 @@ def test_report_writes_surface_figures(tmp_path):
         ]
     )
     assert code == 0
+    return out
+
+
+def test_report_writes_surface_figures(tmp_path):
+    """One firm: heatmaps only, plus the win-rate 3D.
+
+    With a single ruleset the risk-geometry grid is 5x1, so one axis is
+    constant and no 3D figure is written for it. The R:R surface is never
+    drawn in 3D, because its cells are read one at a time. The win-rate
+    surface varies on both axes and is the one 3D view this run has.
+    """
+    out = _run_report(tmp_path, "apex-50k-eod")
 
     assert (out / "report.md").exists()
 
     pngs = sorted(p.name for p in out.glob("*.png"))
     assert pngs, "the report command wrote no figures"
-    # One 3d and one heatmap for each of the three surfaces.
-    assert len(pngs) == 6, pngs
-    assert any(n.endswith("_3d.png") for n in pngs)
-    assert any(n.endswith("_heatmap.png") for n in pngs)
+    assert pngs == [
+        "surface_risk_geometry_heatmap.png",
+        "surface_rr_ratio_heatmap.png",
+        "surface_win_rate_3d.png",
+        "surface_win_rate_heatmap.png",
+    ], pngs
+
+    # The degenerate grid still gets its heatmap, and must not get a
+    # curtain.
+    assert not (out / "surface_risk_geometry_3d.png").exists()
+    # The R:R surface is heatmap-only by decision, not by degeneracy.
+    assert not (out / "surface_rr_ratio_3d.png").exists()
+
+
+def test_report_writes_a_3d_figure_once_rulesets_are_crossed(tmp_path):
+    """Crossing rulesets makes the risk-geometry grid a real surface.
+
+    The ruleset x risk-geometry cross is the point of the package, and it
+    only exists when more than one ruleset is supplied.
+    """
+    out = _run_report(tmp_path, "apex-50k-eod,topstep-50k")
+
+    pngs = sorted(p.name for p in out.glob("*.png"))
+    assert pngs == [
+        "surface_risk_geometry_3d.png",
+        "surface_risk_geometry_heatmap.png",
+        "surface_rr_ratio_heatmap.png",
+        "surface_win_rate_3d.png",
+        "surface_win_rate_heatmap.png",
+    ], pngs

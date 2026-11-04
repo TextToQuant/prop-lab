@@ -199,6 +199,72 @@ def test_3d_surface_uses_the_correct_orientation():
         plt.close(fig)
 
 
+def _drawn_path_count(fig) -> int:
+    """How many polygons the 3D surface actually rendered.
+
+    ``plot_surface`` returns an artist whose polygons are the quads it
+    built. If it could not build any, the count is zero and the figure
+    shows an empty grid even though the axes, the title and the colour
+    bar all look correct.
+    """
+    ax = fig.axes[0]
+    total = 0
+    for collection in ax.collections:
+        total += len(collection.get_paths())
+    return total
+
+
+def test_3d_surface_draws_something_when_both_axes_have_values():
+    """A normal 2D surface must render visible geometry.
+
+    The regression below is only meaningful if the ordinary case works,
+    so this asserts the positive control first.
+    """
+    surface = _surface(3, 2)
+    fig = surface.to_3d()
+    try:
+        fig.canvas.draw()
+        assert _drawn_path_count(fig) > 0
+    finally:
+        plt.close(fig)
+
+
+def test_3d_surface_draws_with_a_single_ruleset_row():
+    """A surface with one ruleset has a y axis of length 1.
+
+    ``matplotlib``'s ``plot_surface`` cannot build a quad mesh along a
+    dimension of length 1, so it silently renders nothing: the figure
+    comes back with a correct title, correct axis limits and a correct
+    colour bar, and an entirely empty plotting area.
+
+    This is the shape the risk-geometry surface has in the normal
+    single-ruleset case, which is the surface the report leads with.
+    The rendered PNG was empty, and no test caught it because the
+    existing 3D tests only asserted that a figure came back.
+    """
+    surface = _surface(5, 1)
+    fig = surface.to_3d()
+    try:
+        fig.canvas.draw()
+        assert _drawn_path_count(fig) > 0, (
+            "the 3D surface rendered no geometry: plot_surface cannot mesh "
+            "an axis of length 1, so the figure is an empty grid"
+        )
+    finally:
+        plt.close(fig)
+
+
+def test_3d_surface_draws_with_a_single_x_value():
+    """The same degenerate case on the x axis."""
+    surface = _surface(1, 4)
+    fig = surface.to_3d()
+    try:
+        fig.canvas.draw()
+        assert _drawn_path_count(fig) > 0
+    finally:
+        plt.close(fig)
+
+
 def test_heatmap_figure_size_is_sane():
     """A single-row heatmap should not waste most of the canvas."""
     surface = _surface(5, 1)

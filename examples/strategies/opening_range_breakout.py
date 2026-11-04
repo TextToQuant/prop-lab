@@ -41,10 +41,11 @@ class OpeningRangeBreakout(StrategyCore):
 
     Parameters:
         window_minutes: length of the opening range in minutes. Default 30.
+            This is measured in real elapsed time, so it means 30 minutes
+            on any timeframe.
         rr_ratio: target distance as a multiple of the stop distance.
             Default 1.5.
         direction: 'both', 'long' or 'short'. Default 'both'.
-        bars_per_minute: bars per minute, used to convert the window.
         buffer_points: extra distance added to the stop beyond the range
             width, to avoid being stopped by a marginal break. Default 0.0.
     """
@@ -56,7 +57,6 @@ class OpeningRangeBreakout(StrategyCore):
         window_minutes: int = 30,
         rr_ratio: float = 1.5,
         direction: str = "both",
-        bars_per_minute: int = 5,
         buffer_points: float = 0.0,
         **kwargs,
     ):
@@ -66,19 +66,21 @@ class OpeningRangeBreakout(StrategyCore):
             direction=direction,
             buffer_points=buffer_points,
         )
-        self.window_bars = max(1, window_minutes // bars_per_minute)
+        self.window_minutes = window_minutes
         self.rr_ratio = rr_ratio
         self.direction = direction
         self.buffer_points = buffer_points
         self._session_date: str | None = None
-        self._range_bars_seen = 0
+        self._session_anchor: int | None = None
+        self._window_open = True
         self._range_high = -np.inf
         self._range_low = np.inf
         self._signal_fired = False
 
     def on_session_start(self, bar: Bar) -> None:
         """Reset the opening range at the start of each session."""
-        self._range_bars_seen = 0
+        self._session_anchor = bar.timestamp
+        self._window_open = True
         self._range_high = -np.inf
         self._range_low = np.inf
         self._signal_fired = False
@@ -89,11 +91,17 @@ class OpeningRangeBreakout(StrategyCore):
             self.on_session_start(bar)
             self._session_date = bar.date
 
-        if self._range_bars_seen < self.window_bars:
-            self._range_high = max(self._range_high, bar.high)
-            self._range_low = min(self._range_low, bar.low)
-            self._range_bars_seen += 1
-            return None
+        # The opening range is the first `window_minutes` of the session,
+        # measured from the first bar this session actually saw. Counting
+        # bars instead would silently mean a different window on a
+        # different timeframe: 6 bars is 30 minutes at 5m and 90 at 15m.
+        if self._window_open:
+            elapsed = bar.timestamp - self._session_anchor
+            if elapsed < self.window_minutes * 60:
+                self._range_high = max(self._range_high, bar.high)
+                self._range_low = min(self._range_low, bar.low)
+                return None
+            self._window_open = False
 
         if self._signal_fired:
             return None

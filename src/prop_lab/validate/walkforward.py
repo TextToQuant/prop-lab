@@ -544,7 +544,22 @@ def walk_forward(
     # changes how the verdict should be read.
     edge_warning = edge.warning()
     if edge_warning:
-        warnings.insert(0, edge_warning)
+        if verdict == "fails" and edge.conclusive and not edge.significant:
+            # `fails` and "no edge was detected" are two true statements
+            # about one result, and read side by side they sound like a
+            # contradiction: `fails` suggests an edge that broke, while
+            # there was never an edge to break. Say both in one sentence so
+            # the reader cannot take them as two findings.
+            warnings.insert(
+                0,
+                f"fails, and no edge was detected: the out-of-sample mean R of "
+                f"{edge.mean_r:+.4f} is not positive and its 95 percent "
+                f"bootstrap interval of [{edge.ci_low:+.4f}, {edge.ci_high:+.4f}] "
+                "includes zero, so there was no edge here to preserve or to "
+                "lose. Read any pass rate below as descriptive only.",
+            )
+        else:
+            warnings.insert(0, edge_warning)
     warnings.extend(edge.warnings)
 
     if degradation < OOS_BETTER_IS_NOTE_THRESHOLD:

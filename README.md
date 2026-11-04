@@ -14,7 +14,9 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pytest -q
 ```
 
-Requires Python 3.10+. Core dependencies: numpy, pandas, matplotlib.
+Requires Python 3.10+. Core dependencies: numpy, pandas, matplotlib, `yfinance`
+and `requests` — the data adapters are part of the package, not an optional
+extra, so a plain `pip install -e .` is enough to import `prop_lab.data`.
 
 ---
 
@@ -50,11 +52,13 @@ fabricating trades that never happened.
 ```bash
 proplab fetch --source binance --symbol BTCUSDT --interval 15m --start 2023-01-01 --out data/
 proplab report --strategy examples/strategies/trend_continuation.py:TrendContinuation \
-    --data data/BTCUSDT_15m.csv --firm apex-50k-eod --out reports/
+    --data data/BTCUSDT_15m.csv --out reports/
 ```
 
 That downloads free data, backtests, validates out of sample, simulates the
 challenge 10,000 times, renders the surfaces and writes a Markdown report.
+`--firm` defaults to all three firm presets so the ruleset axis is a real
+axis; pass a single one (`--firm apex-50k-eod`) to model that account only.
 
 ## The one thing to understand before you trust a number
 
@@ -69,6 +73,23 @@ at all** scores around **27%**.
 Every report therefore states the zero-edge baseline next to your number.
 A strategy scoring 27% has demonstrated nothing. A strategy scoring 40% has
 demonstrated something.
+
+**The baseline is specific to the bracket, not a universal 27%.** With no
+information at all, the chance a trade reaches its target before its stop is
+`1 / (1 + R:R)` — 50.0% at 1:1, 33.3% at 1:2, 16.7% at 1:5 — so a 1.5R
+strategy is measured against a 1.5R baseline, which lands near 28% under
+Topstep-style rules rather than 27%. Comparing a 2R strategy against the 1:1
+figure compares it with a different game. The CLI picks up the strategy's own
+bracket; the API takes `rr`.
+
+**And the baseline assumes no time limit.** The bracket model says every trade
+ends at its stop or its target. A real run force-closes open positions at the
+session close, so undecided trades leave at the close at an arbitrary R. A
+bracket's *hit rate* then depends on how much time it is given — only its
+expectation does not. Modelling that needs a volatility assumption, which is a
+property of the market rather than of the rules, so the baseline describes a
+challenge with no time limit and is the honest reference only for that case.
+It is stated as a limitation rather than approximated away.
 
 And a pass rate is not an edge either. The report also gives a confidence
 interval on the mean R per trade, and the verdict says `no_edge` when that
@@ -115,6 +136,36 @@ A signal on bar `i` is filled at the **open of bar `i+1`**. If a bar
 touches both the stop and the target, the stop is assumed to have filled
 first — the pessimistic assumption.
 
+### `on_bar` is only called while flat — read this before writing an indicator
+
+**The engine calls `on_bar` only when no position is open.** While a trade is
+live, bars pass without the strategy seeing them. This is deliberate (a
+strategy is asked for an entry, not for a running commentary) and it is
+harmless for a stateless rule: "close above the 20-bar high" can be computed
+from a slice of history on any bar.
+
+It is **not** harmless for anything that accumulates state bar by bar. If you
+fold an RSI, an ATR or an EMA inside `on_bar` — `self._closes.append(bar.close)`
+and average over the buffer — you are averaging over a *gapped* stream, because
+the bars that passed while you were in a trade never arrived. The backtest
+still runs, still produces trades, and the numbers look plausible. They are
+computed from the wrong series.
+
+Two bundled strategies have this latent problem
+(`examples/strategies/doji_ema_trend.py` and `strategies/ema_trend_pullback.py`).
+In an end-to-end test, a stateful implementation saw 36,818 of 49,628 bars and
+produced stop distances that matched the ATR of no bar at all.
+
+Two ways to stay correct:
+
+- **Precompute** the indicator over the whole series and look it up by
+  `bar_index`, or
+- **keep the rule stateless**, computing from a window of history in the frame.
+
+The session-range examples (`trend_continuation`, `opening_range_breakout`) are
+largely unaffected because they only accumulate during the first minutes of a
+session, when they are flat.
+
 Write every assumption you made into a `notes` string on the class. The
 report prints it, so the reader knows what was actually tested.
 
@@ -136,6 +187,80 @@ that have cost time in this project.
 | `proplab trades` | export the trade list so you can audit the result |
 | `proplab sweep` | sweep strategy parameters; every cell is a real backtest |
 | `proplab strategies` | list the built-in examples, firm presets and geometries |
+
+## Reading the plots
+
+The x-axis of the risk-geometry plots is **how many dollars are risked per
+trade**. Those names are not decoration; each is a different sizing rule:
+
+| label on the axis | what it actually does |
+|---|---|
+| `max_size` | risk a flat **$500** per trade, whatever the account is doing |
+| `frac_2pct` | risk **2% of current equity** — compounds up and down with the account |
+| `dd_frac_40pct` | risk **40% of the room left** between equity and the drawdown floor |
+| `anti_martingale` | **$400**, plus 15% of profit above the starting balance |
+| `floor_aware` | scale risk **down as equity approaches the floor** |
+
+Every one of them is additionally capped at the firm's daily loss limit and at
+the remaining drawdown room, and floored at $25, so none can risk the account
+outright in a single trade.
+
+The other axis, `ruleset`, is one firm's rulebook: profit target, drawdown
+size and whether it trails end-of-day or intraday, daily loss limit, and any
+consistency rule. The three presets are `apex-50k-eod`, `apex-50k-intraday`
+and `topstep-50k`. Pass several at once to cross them:
+
+```bash
+proplab surface --strategy ... --firm apex-50k-eod,topstep-50k
+```
+
+Crossing firms is the point of that surface: the same strategy scores about
+24% under APEX 50K EOD and about 8% under Topstep 50K, because Topstep adds a
+consistency rule and a minimum-trading-days rule.
+
+**A 3D plot is only drawn when both axes vary.** With a single firm the
+`ruleset` axis is a constant, so the figure would be a curtain rather than a
+surface; it is drawn as a heatmap instead. The 3D views you should expect are
+the ruleset x risk-geometry cross and win-rate x R:R; the R:R x risk-geometry
+surface is a heatmap because its cells are read one at a time.
+
+### What the figures look like
+
+All five below come from one command, on the bundled
+`trend_continuation` example over BTCUSDT 15-minute bars, crossing all three
+firm presets:
+
+```bash
+proplab surface --strategy examples/strategies/trend_continuation.py:TrendContinuation \
+    --data data/BTCUSDT_15m.csv --session-open-hour 0 --attempts 2000
+```
+
+**Pass rate over risk geometry and firm ruleset** — the cross this project was
+built for. Both axes are measured, and the title says so. Topstep's column
+sits far below APEX's, which is the ruleset, not the strategy.
+
+![Risk geometry x ruleset, 3D](docs/images/surface-risk-geometry-3d.png)
+
+**The same numbers as a heatmap**, which is the readable view of a two-way
+table — every cell annotated, no depth ambiguity.
+
+![Risk geometry x ruleset, heatmap](docs/images/surface-risk-geometry-heatmap.png)
+
+**Pass rate over win rate and R:R** — the DeltaTrend Trading surface. Both
+axes are modelled and the title says `MODELLED / MODELLED`, because a win rate
+cannot be recovered from a backtest without inventing trades.
+
+![Win rate x R:R, 3D](docs/images/surface-win-rate-3d.png)
+
+![Win rate x R:R, heatmap](docs/images/surface-win-rate-heatmap.png)
+
+**Pass rate over R:R and risk geometry** — heatmap only, since its cells are
+read one at a time. The R:R axis here is genuinely re-run at every value, so
+the rows differ; a flat set of rows would mean the re-run never happened.
+
+![R:R x risk geometry, heatmap](docs/images/surface-rr-ratio-heatmap.png)
+
+
 
 ## Seeing how parameters fit the data
 

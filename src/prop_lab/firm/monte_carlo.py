@@ -762,10 +762,47 @@ def rules_staleness_warning(rules: FirmRules, *, today: Any = None) -> str:
 
 
 
+def _zero_edge_bracket(n_trades: int, rr: float) -> np.ndarray:
+    """The zero-edge trade array for a reward-to-risk bracket.
+
+    With no information at all, the chance a trade reaches its target
+    before its stop is ``1 / (1 + rr)`` -- the gambler's-ruin result for
+    two absorbing barriers. So the array that represents "no edge" is a
+    fraction ``1/(1+rr)`` of trades at ``+rr`` and the rest at ``-1``.
+    Every bracket built this way has a mean of zero, up to one trade's
+    worth of rounding.
+
+    Args:
+        n_trades: length of the array.
+        rr: the reward-to-risk bracket, greater than zero.
+
+    Returns:
+        A float array of ``n_trades`` values, unshuffled.
+
+    Raises:
+        ValueError: if ``n_trades`` is below 2 or ``rr`` is not positive.
+    """
+    if n_trades < 2:
+        raise ValueError(f"n_trades must be at least 2, got {n_trades!r}")
+    if not rr > 0:
+        raise ValueError(f"rr must be positive, got {rr!r}")
+
+    n_wins = int(round(n_trades * (1.0 / (1.0 + rr))))
+    # Keep both outcomes present, or the array is not a bracket at all.
+    n_wins = min(max(n_wins, 1), n_trades - 1)
+    return np.concatenate(
+        [
+            np.full(n_wins, float(rr), dtype=float),
+            -np.ones(n_trades - n_wins, dtype=float),
+        ]
+    )
+
+
 def zero_edge_baseline(
     rules: FirmRules,
     *,
     n_trades: int = 2000,
+    rr: float = 1.0,
     risk_geometry: str = "frac_2pct",
     n_attempts: int = 2000,
     seed: int = 42,
@@ -785,30 +822,58 @@ def zero_edge_baseline(
     strategy with no edge at all scores, and the question is how far
     above that baseline the strategy sits.
 
-    The synthetic trade array is built to have a mean R of EXACTLY zero
-    (equal numbers of +1R and -1R, shuffled), so the baseline is a
-    property of the RULES, not of any particular strategy or of sampling
-    noise in the trade array.
+    **The bracket decides the hit rate.** With no information at all, the
+    probability that a trade reaches its target before its stop is the
+    gambler's-ruin result::
+
+        P(target first) = stop / (stop + target) = 1 / (1 + rr)
+
+    so a 1:1 bracket wins 50 percent of the time, a 1:2 wins 33.3
+    percent, and a 1:5 wins 16.7 percent. Every one of them has an
+    expectation of exactly zero, which is what makes this a baseline and
+    not a forecast. Passing ``rr`` is what keeps the comparison honest: a
+    2R strategy measured against a 1:1 baseline is being compared with a
+    different game.
+
+    The synthetic trade array is therefore built from that bracket -- a
+    fraction ``1/(1+rr)`` of trades at ``+rr`` and the rest at ``-1`` --
+    so the baseline is a property of the RULES and the BRACKET, not of
+    any particular strategy or of sampling noise in the trade array. The
+    mean is zero up to one trade's worth of rounding.
+
+    **Known limitation.** The bracket assumes every trade ends at its stop
+    or its target. A real run force-closes open positions at the end of
+    the session, so undecided trades leave at the close at an arbitrary
+    R. The hit rate of a real bracket depends on how much time it is
+    given; the expectation does not. This baseline therefore describes a
+    challenge with no time limit, and it is the honest reference only for
+    that case. Modelling time exits needs a volatility assumption, which
+    is a property of the market rather than of the rules.
 
     Args:
         rules: the firm ruleset.
         n_trades: length of the synthetic trade array. It only sets how
             many trades the resampling pool holds; the mean is zero by
             construction either way.
+        rr: the reward-to-risk bracket the baseline is built for. Default
+            1.0, which is a 1:1 bracket and a 50 percent zero-edge hit
+            rate. Pass the strategy's own R:R to compare like with like.
         risk_geometry: the sizing rule to evaluate the baseline under.
         n_attempts: Monte Carlo attempts.
         seed: RNG seed.
 
     Returns:
         The pass rate as a float in ``[0, 1]``.
+
+    Raises:
+        ValueError: if ``n_trades`` is below 2 or ``rr`` is not positive.
     """
     if n_trades < 2:
         raise ValueError(f"n_trades must be at least 2, got {n_trades!r}")
+    if not rr > 0:
+        raise ValueError(f"rr must be positive, got {rr!r}")
 
-    half = n_trades // 2
-    arr = np.concatenate(
-        [np.ones(half, dtype=float), -np.ones(n_trades - half, dtype=float)]
-    )
+    arr = _zero_edge_bracket(n_trades, rr)
     rng = np.random.default_rng(seed)
     rng.shuffle(arr)
 
@@ -825,6 +890,24 @@ def zero_edge_baseline(
 # ----------------------------------------------------------------------
 # Monte Carlo over many attempts
 # ----------------------------------------------------------------------
+def _resampling_diagnostic_direction(gap: float) -> str:
+    """Which way the i.i.d. bootstrap errs, given block minus i.i.d.
+
+    ``gap`` is the block-bootstrap pass rate minus the i.i.d. pass rate.
+    A NEGATIVE gap means the i.i.d. run scored HIGHER, so it flattered the
+    strategy and is the optimistic reading. Getting this branch backwards
+    tells the reader the opposite of the truth about which resampling to
+    trust, which is worse than printing no diagnostic at all.
+
+    Args:
+        gap: ``block_pass_rate - iid_pass_rate``.
+
+    Returns:
+        ``"optimistic"`` or ``"pessimistic"``.
+    """
+    return "optimistic" if gap < 0 else "pessimistic"
+
+
 def monte_carlo_challenge(
     pnl_r_array: np.ndarray,
     rules: FirmRules,
@@ -979,11 +1062,11 @@ def monte_carlo_challenge(
         )
         gap = pass_rate - iid_summary.pass_rate
         if abs(gap) >= 0.02:
-            direction = "optimistic" if gap > 0 else "pessimistic"
+            direction = _resampling_diagnostic_direction(gap)
             msg.append(
                 f"resampling diagnostic: the i.i.d. bootstrap gives a pass rate "
-                f"{abs(gap) * 100:.1f} percentage points "
-                f"{direction} than the block bootstrap "
+                f"that is {abs(gap) * 100:.1f} percentage points more {direction} "
+                f"than the block bootstrap "
                 f"({iid_summary.pass_rate:.1%} vs {pass_rate:.1%}). The gap is the "
                 "cost of destroying the within-day loss clustering."
             )

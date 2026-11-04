@@ -36,12 +36,11 @@ class TrendContinuation(StrategyCore):
 
     Parameters:
         window_minutes: how many minutes at the open of the session form
-            the value area. Default 30, which is six 5-minute bars.
+            the value area. Default 30. This is measured in real elapsed
+            time, so it means 30 minutes on any timeframe.
         rr_ratio: target distance as a multiple of the stop distance.
             Default 2.0.
         direction: 'both', 'long' or 'short'. Default 'both'.
-        bars_per_minute: how many bars make up one minute, used to convert
-            ``window_minutes`` into a bar count. Default 5 (5-minute bars).
     """
 
     name = "TC"
@@ -51,7 +50,6 @@ class TrendContinuation(StrategyCore):
         window_minutes: int = 30,
         rr_ratio: float = 2.0,
         direction: str = "both",
-        bars_per_minute: int = 5,
         **kwargs,
     ):
         super().__init__(
@@ -59,18 +57,20 @@ class TrendContinuation(StrategyCore):
             rr_ratio=rr_ratio,
             direction=direction,
         )
-        self.window_bars = max(1, window_minutes // bars_per_minute)
+        self.window_minutes = window_minutes
         self.rr_ratio = rr_ratio
         self.direction = direction
         self._session_date: str | None = None
-        self._range_bars_seen = 0
+        self._session_anchor: int | None = None
+        self._window_open = True
         self._range_high = -np.inf
         self._range_low = np.inf
         self._signal_fired = False
 
     def on_session_start(self, bar: Bar) -> None:
         """Reset the value area at the start of each trading session."""
-        self._range_bars_seen = 0
+        self._session_anchor = bar.timestamp
+        self._window_open = True
         self._range_high = -np.inf
         self._range_low = np.inf
         self._signal_fired = False
@@ -81,12 +81,17 @@ class TrendContinuation(StrategyCore):
             self.on_session_start(bar)
             self._session_date = bar.date
 
-        # Build the value area from the first bars of the session.
-        if self._range_bars_seen < self.window_bars:
-            self._range_high = max(self._range_high, bar.high)
-            self._range_low = min(self._range_low, bar.low)
-            self._range_bars_seen += 1
-            return None
+        # Build the value area for the first `window_minutes` of the
+        # session, measured from the first bar this session actually saw.
+        # Counting bars instead would silently mean a different window on
+        # a different timeframe: 6 bars is 30 minutes at 5m and 90 at 15m.
+        if self._window_open:
+            elapsed = bar.timestamp - self._session_anchor
+            if elapsed < self.window_minutes * 60:
+                self._range_high = max(self._range_high, bar.high)
+                self._range_low = min(self._range_low, bar.low)
+                return None
+            self._window_open = False
 
         if self._signal_fired:
             return None

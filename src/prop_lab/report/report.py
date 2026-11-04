@@ -248,13 +248,25 @@ def _headline(
             f"{_fmt_float(edge_ci_high)}, excluding zero)"
         )
     elif edge_conclusive:
+        # `fails` plus "no edge was detected" sound contradictory read side
+        # by side: `fails` suggests an edge that broke, when there was never
+        # an edge. Join them explicitly rather than leaving the reader to
+        # reconcile two findings that are really one.
+        _verdict_is_fails = str(_get(wf, "verdict", "")) == "fails"
+        _fails_note = (
+            " The verdict is `fails` because the out-of-sample mean R is not "
+            "positive; this line and the verdict are one statement, not two "
+            "findings: there was no edge here to preserve or to lose."
+            if _verdict_is_fails
+            else ""
+        )
         edge_line = (
             f"- Edge significance: NO edge was detected. The out-of-sample "
             f"mean R of {_fmt_float(_get(wf, 'oos_mean_r', None))} has a 95% "
             f"bootstrap CI of {_fmt_float(edge_ci_low)} to "
             f"{_fmt_float(edge_ci_high)}, which INCLUDES zero. The pass rate "
             f"below is the pass rate of a strategy that is not measurably "
-            f"better than random."
+            f"better than random.{_fails_note}"
         )
     else:
         edge_line = (
