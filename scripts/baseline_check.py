@@ -62,6 +62,11 @@ from prop_lab.data import assign_session_dates
 # The reference project (github.com/dsilva42/prop-risk-geometry) carries
 # no license file, so nothing was copied from it. The strategy below is
 # an independent implementation of the described rules.
+#
+# These numbers were measured with the BAR-COUNT window in the class
+# below (six 5-minute bars), not with the elapsed-time window the shipped
+# example now uses. On 5-minute data the two agree; see the class
+# docstring before changing either of them.
 REFERENCE_TRADES = 73
 REFERENCE_WIN_RATE = 0.411
 REFERENCE_MEAN_R = 0.233
@@ -73,6 +78,25 @@ class TrendContinuation(StrategyCore):
     Continuation after a pullback to the session's value area: track the
     first 30 minutes of the session, then enter long when price closes
     above the range midpoint after having dipped back into it.
+
+    DELIBERATELY FROZEN — do not "fix" this copy
+    --------------------------------------------
+    This class is a private copy, not an import of
+    ``examples/strategies/trend_continuation.py``, because its job is to
+    pin ``REFERENCE_*`` above and detect drift in the ENGINE. Editing it
+    would move the very fixed point it exists to check.
+
+    The two copies have since diverged on purpose. The shipped example
+    now measures its window in ELAPSED TIME (``window_minutes`` from the
+    first bar of the session), after a defect where a hard-coded
+    ``bars_per_minute = 5`` made "30 minutes" mean 90 on 15-minute data.
+    This copy keeps the old BAR-COUNT window (``window_minutes // 5``),
+    which is what the reference numbers were measured with.
+
+    On the 5-minute data this script accepts, the two are equivalent — six
+    5-minute bars is thirty minutes — so 73 / 41.1% / +0.233R still holds.
+    On any other timeframe they would silently disagree, which is why this
+    script insists on 5-minute input rather than resampling to it.
     """
 
     name = "TC"
