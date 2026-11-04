@@ -53,7 +53,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = [
+    "pytest>=7",
+    # tomllib is stdlib from 3.11. The docs-vs-code test parses
+    # pyproject.toml, and requires-python says >=3.10, so 3.10 needs the
+    # backport or that test cannot run at all.
+    "tomli>=2; python_version < '3.11'",
+]
 
 [project.urls]
 Homepage = "https://github.com/<owner>/prop-lab"

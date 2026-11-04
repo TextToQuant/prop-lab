@@ -229,7 +229,15 @@ def test_agents_md_documents_the_session_and_purge_flags():
 
 def test_agents_md_dependency_list_matches_pyproject():
     """The documented hard dependencies are the real hard dependencies."""
-    import tomllib
+    # tomllib is stdlib from Python 3.11. pyproject declares
+    # requires-python >= 3.10, so on 3.10 the backport is used instead of
+    # letting the test die with ModuleNotFoundError. That failure looked
+    # like a broken contract when it was only a missing module, and it
+    # made every 3.10 CI job red.
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
+        import tomli as tomllib
 
     with open(ROOT / "pyproject.toml", "rb") as fh:
         pyproject = tomllib.load(fh)
